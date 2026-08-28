@@ -369,8 +369,36 @@ def write_to_db(batches, settlement_rows, order_rows, bank_rows):
         db.close()
 
 
-def write_csvs(settlement_rows, order_rows, bank_rows):
+def write_csvs(batches, settlement_rows, order_rows, bank_rows):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    batches_path = DATA_DIR / "settlement_batches.csv"
+    with open(batches_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "batch_id",
+                "settlement_date",
+                "total_gross",
+                "total_refunds",
+                "total_fees",
+                "total_tax",
+                "total_net",
+            ],
+        )
+        writer.writeheader()
+        for batch in batches:
+            writer.writerow(
+                {
+                    "batch_id": batch["batch_num"],
+                    "settlement_date": batch["settlement_date"].isoformat(),
+                    "total_gross": batch["total_gross"],
+                    "total_refunds": batch["total_refunds"],
+                    "total_fees": batch["total_fees"],
+                    "total_tax": batch["total_tax"],
+                    "total_net": batch["total_net"],
+                }
+            )
 
     settlement_path = DATA_DIR / "razorpay_settlement.csv"
     with open(settlement_path, "w", newline="", encoding="utf-8") as f:
@@ -429,7 +457,7 @@ def write_csvs(settlement_rows, order_rows, bank_rows):
         for row in order_rows:
             writer.writerow(row)
 
-    return settlement_path, bank_path, orders_path
+    return batches_path, settlement_path, bank_path, orders_path
 
 
 def write_ground_truth(ground_truth):
@@ -443,7 +471,9 @@ def main():
     batches, settlement_rows, order_rows, bank_rows, ground_truth = build_dataset()
 
     db_counts = write_to_db(batches, settlement_rows, order_rows, bank_rows)
-    settlement_path, bank_path, orders_path = write_csvs(settlement_rows, order_rows, bank_rows)
+    batches_path, settlement_path, bank_path, orders_path = write_csvs(
+        batches, settlement_rows, order_rows, bank_rows
+    )
     ground_truth_path = write_ground_truth(ground_truth)
 
     print("Synthetic data generation complete.")
@@ -453,6 +483,7 @@ def main():
         print(f"  {k}: {v}")
     print()
     print("CSV exports:")
+    print(f"  {batches_path} ({len(batches)} rows)")
     print(f"  {settlement_path} ({len(settlement_rows)} rows)")
     print(f"  {bank_path} ({len(bank_rows)} rows)")
     print(f"  {orders_path} ({len(order_rows)} rows)")

@@ -1,18 +1,18 @@
 """
-Ingests the three raw CSV exports (data/razorpay_settlement.csv, data/bank_statement.csv,
-data/order_records.csv) into the database tables.
+Ingests the four raw CSV exports (data/settlement_batches.csv, data/razorpay_settlement.csv,
+data/bank_statement.csv, data/order_records.csv) into the database tables.
 
 This is ingestion only: rows are parsed, validated, and loaded as-is. No matching,
-no bridge calculation, no exception detection. The only "computation" here is summing
-each settlement batch's own line items into its SettlementBatch totals row -- plain
-deterministic aggregation of the batch's own numbers, not reconciliation against
-anything else. Bank transactions are loaded standalone with no batch link, since
-deciding which bank credit belongs to which batch is matching logic and comes later.
+no bridge calculation, no exception detection. SettlementBatch totals are loaded
+directly from settlement_batches.csv's own declared columns -- ingestion does not
+derive them by summing SettlementEntry rows, since that would silently double-count
+any duplicated line item and make the bridge's internal-consistency check meaningless.
+Bank transactions are loaded standalone with no batch link, since deciding which
+bank credit belongs to which batch is matching logic and comes later.
 """
 import csv
 import datetime
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -23,6 +23,7 @@ from app import models
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 
+BATCH_REQUIRED = ["batch_id", "settlement_date", "total_gross", "total_refunds", "total_fees", "total_tax", "total_net"]
 SETTLEMENT_REQUIRED = ["batch_id", "settlement_date", "order_ref", "gross_amount", "fee", "tax", "refund", "net_amount"]
 BANK_REQUIRED = ["date", "amount", "reference"]
 ORDER_REQUIRED = ["order_ref", "amount", "status", "fee_amount"]
@@ -43,6 +44,34 @@ def missing_fields(row, required):
 def read_csv_rows(path):
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+def ingest_batches(path):
+    """Returns (valid_rows, rejects). Batch totals are read as-is, never derived."""
+    valid_rows = []
+    rejects = []
+
+    for i, row in enumerate(read_csv_rows(path), start=2):
+        missing = missing_fields(row, BATCH_REQUIRED)
+        if missing:
+            rejects.append((i, row, f"missing required field(s): {', '.join(missing)}"))
+            continue
+        try:
+            valid_rows.append(
+                {
+                    "batch_id": int(row["batch_id"]),
+                    "settlement_date": parse_date(row["settlement_date"]),
+                    "total_gross": parse_float(row["total_gross"]),
+                    "total_refunds": parse_float(row["total_refunds"]),
+                    "total_fees": parse_float(row["total_fees"]),
+                    "total_tax": parse_float(row["total_tax"]),
+                    "total_net": parse_float(row["total_net"]),
+                }
+            )
+        except ValueError as e:
+            rejects.append((i, row, f"unparseable value: {e}"))
+
+    return valid_rows, rejects
 
 
 def ingest_settlement(path):
@@ -124,7 +153,9 @@ def ingest_orders(path):
     return valid_rows, rejects
 
 
-def load_into_db(settlement_rows, bank_rows, order_rows):
+def load_into_db(batch_rows, settlement_rows, bank_rows, order_rows):
+    """Returns (counts, unresolved_settlement_rows) -- the latter are settlement rows
+    whose batch_id doesn't match any row in settlement_batches.csv, so they're skipped."""
     Base.metadata.create_all(engine)
 
     db = SessionLocal()
@@ -150,30 +181,31 @@ def load_into_db(settlement_rows, bank_rows, order_rows):
             )
         db.commit()
 
-        groups = defaultdict(list)
-        for row in settlement_rows:
-            groups[(row["batch_id"], row["settlement_date"])].append(row)
-
-        batch_pk_by_key = {}
-        for (csv_batch_id, settlement_date), rows in groups.items():
+        batch_pk_by_csv_id = {}
+        for row in batch_rows:
             batch = models.SettlementBatch(
-                settlement_date=settlement_date,
-                total_gross=round(sum(r["gross_amount"] for r in rows), 2),
-                total_refunds=round(sum(r["refund"] for r in rows), 2),
-                total_fees=round(sum(r["fee"] for r in rows), 2),
-                total_tax=round(sum(r["tax"] for r in rows), 2),
-                total_net=round(sum(r["net_amount"] for r in rows), 2),
+                settlement_date=row["settlement_date"],
+                total_gross=row["total_gross"],
+                total_refunds=row["total_refunds"],
+                total_fees=row["total_fees"],
+                total_tax=row["total_tax"],
+                total_net=row["total_net"],
                 bank_transaction_id=None,  # linking to a bank credit is matching logic, not ingestion
             )
             db.add(batch)
             db.flush()
-            batch_pk_by_key[(csv_batch_id, settlement_date)] = batch.id
+            batch_pk_by_csv_id[row["batch_id"]] = batch.id
         db.commit()
 
+        unresolved_settlement_rows = []
         for row in settlement_rows:
+            batch_pk = batch_pk_by_csv_id.get(row["batch_id"])
+            if batch_pk is None:
+                unresolved_settlement_rows.append(row)
+                continue
             db.add(
                 models.SettlementEntry(
-                    batch_id=batch_pk_by_key[(row["batch_id"], row["settlement_date"])],
+                    batch_id=batch_pk,
                     order_ref=row["order_ref"],
                     gross_amount=row["gross_amount"],
                     fee=row["fee"],
@@ -202,7 +234,7 @@ def load_into_db(settlement_rows, bank_rows, order_rows):
             "settlement_entries": db.query(models.SettlementEntry).count(),
             "order_records": db.query(models.OrderRecord).count(),
         }
-        return counts
+        return counts, unresolved_settlement_rows
     finally:
         db.close()
 
@@ -213,26 +245,37 @@ def print_rejects(label, rejects):
 
 
 def main():
+    batches_path = DATA_DIR / "settlement_batches.csv"
     settlement_path = DATA_DIR / "razorpay_settlement.csv"
     bank_path = DATA_DIR / "bank_statement.csv"
     orders_path = DATA_DIR / "order_records.csv"
 
+    batch_rows, batch_rejects = ingest_batches(batches_path)
     settlement_rows, settlement_rejects = ingest_settlement(settlement_path)
     bank_rows, bank_rejects = ingest_bank(bank_path)
     order_rows, order_rejects = ingest_orders(orders_path)
 
     print("Validation:")
+    print_rejects("batches", batch_rejects)
     print_rejects("settlement", settlement_rejects)
     print_rejects("bank", bank_rejects)
     print_rejects("orders", order_rejects)
-    if not (settlement_rejects or bank_rejects or order_rejects):
+    if not (batch_rejects or settlement_rejects or bank_rejects or order_rejects):
         print("  no rejected rows")
     print()
 
-    counts = load_into_db(settlement_rows, bank_rows, order_rows)
+    counts, unresolved_settlement_rows = load_into_db(batch_rows, settlement_rows, bank_rows, order_rows)
+    for row in unresolved_settlement_rows:
+        print(f"  [settlement] REJECTED after load: unknown batch_id={row['batch_id']} -- order_ref={row['order_ref']}")
+
+    ingested_settlement_count = len(settlement_rows) - len(unresolved_settlement_rows)
 
     print("Ingestion summary:")
-    print(f"  razorpay_settlement.csv: {len(settlement_rows)} ingested, {len(settlement_rejects)} rejected")
+    print(f"  settlement_batches.csv:  {len(batch_rows)} ingested, {len(batch_rejects)} rejected")
+    print(
+        f"  razorpay_settlement.csv: {ingested_settlement_count} ingested, "
+        f"{len(settlement_rejects) + len(unresolved_settlement_rows)} rejected"
+    )
     print(f"  bank_statement.csv:      {len(bank_rows)} ingested, {len(bank_rejects)} rejected")
     print(f"  order_records.csv:       {len(order_rows)} ingested, {len(order_rejects)} rejected")
     print()

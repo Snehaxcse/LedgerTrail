@@ -57,12 +57,12 @@ class Match(Base):
     __tablename__ = "matches"
 
     id = Column(Integer, primary_key=True)
-    settlement_entry_id = Column(Integer, ForeignKey("settlement_entries.id"), nullable=False)
+    settlement_batch_id = Column(Integer, ForeignKey("settlement_batches.id"), nullable=False)
     bank_transaction_id = Column(Integer, ForeignKey("bank_transactions.id"), nullable=False)
     confidence_score = Column(Float, nullable=False)
     match_type = Column(String, nullable=False)  # "exact" | "fuzzy"
 
-    settlement_entry = relationship("SettlementEntry")
+    settlement_batch = relationship("SettlementBatch")
     bank_transaction = relationship("BankTransaction")
 
 

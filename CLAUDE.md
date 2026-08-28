@@ -36,7 +36,7 @@ Frontend: React + Tailwind (built separately in Cursor — API contract only)
 
 **Match**
 - id (PK)
-- settlement_entry_id (FK), bank_transaction_id (FK)
+- settlement_batch_id (FK), bank_transaction_id (FK)
 - confidence_score, match_type ("exact" | "fuzzy")
 
 **ExceptionRecord** (table name stays "exceptions" — class renamed from Exception to avoid shadowing Python's built-in)
@@ -61,8 +61,15 @@ Frontend: React + Tailwind (built separately in Cursor — API contract only)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-Day 1, Section 2 complete: 8-table schema finalized and verified (SettlementBatch added,
-single-sided FK to BankTransaction, OrderRecord.fee_amount added, Exception renamed to
-ExceptionRecord). DB creation confirmed working.
-Next: Section 3 — synthetic dataset generator with 4 injected error types.
-Nothing beyond data generation + ingestion should be built yet.
+Day 1 complete and verified: 8-table schema finalized (SettlementBatch added,
+single-sided unique FK to BankTransaction, OrderRecord.fee_amount added,
+ExceptionRecord renamed). Synthetic dataset generated: 3 batches, ~50-60 order-level
+entries, 4 injected error types (missing refund, wrong fee tier, duplicate entry,
+timing mismatch), one fully clean batch. Ingestion from raw CSV verified against
+a fresh empty database, with duplicate-entry preserved (not deduplicated).
+ground_truth.json confirmed accurate.
+
+Next: Day 2 — deterministic matching engine (settlement batch ↔ bank transaction,
+by amount/date window/reference) and gross-to-net bridge calculation
+(Gross − Refunds − Fees − Tax = Net, compared against matched bank transaction).
+No AI/LLM calls anywhere in this logic — pure deterministic Python.
