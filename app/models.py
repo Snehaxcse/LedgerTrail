@@ -70,11 +70,14 @@ class ExceptionRecord(Base):
     __tablename__ = "exceptions"
 
     id = Column(Integer, primary_key=True)
+    batch_id = Column(Integer, ForeignKey("settlement_batches.id"), nullable=False)
     unexplained_amount = Column(Float, nullable=False)
     classification = Column(String, nullable=False)
     suggested_action = Column(String, nullable=True)
     status = Column(String, nullable=False, default="open")  # "open" | "approved" | "rejected"
     linked_evidence_ids = Column(Text, nullable=True)  # JSON-encoded list of related record ids
+
+    batch = relationship("SettlementBatch")
 
 
 class ApprovalLog(Base):

@@ -254,6 +254,7 @@ def classify_exceptions(db: Session) -> List[ExceptionResult]:
             suggested_action = info["suggested_action"]
 
             exc = models.ExceptionRecord(
+                batch_id=batch.id,
                 unexplained_amount=unexplained_amount,
                 classification=classification,
                 suggested_action=suggested_action,

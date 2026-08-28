@@ -160,7 +160,8 @@ def load_into_db(batch_rows, settlement_rows, bank_rows, order_rows):
 
     db = SessionLocal()
     try:
-        db.query(models.AuditEvent).delete()
+        # AuditEvent is deliberately excluded from this wipe: it is an append-only
+        # audit log and must never be updated or deleted, even on re-ingestion.
         db.query(models.ApprovalLog).delete()
         db.query(models.ExceptionRecord).delete()
         db.query(models.Match).delete()

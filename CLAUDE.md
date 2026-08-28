@@ -61,19 +61,19 @@ Frontend: React + Tailwind (built separately in Cursor — API contract only)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-Day 2 complete and verified: matching engine (app/matching.py) and bridge calculation
-(app/bridge.py) working. Match table is batch-level only (settlement_batch_id, not
-settlement_entry_id) — a BankTransaction settles one whole batch, never a single order.
-Fixed a real bug: ingest.py originally derived SettlementBatch.total_net by summing
-SettlementEntry rows, which double-counted the injected duplicate. Added
-data/settlement_batches.csv as Razorpay's declared totals (separate from entry-level
-data) — ingest.py now reads declared totals directly instead of deriving them.
+Day 3 complete and verified: exception engine (app/exceptions.py) with independent,
+non-mutually-exclusive classification per batch. Refund/fee checks decoupled from
+match_diff — they scan every batch regardless of bank-side variance, since Razorpay's
+declared total can be internally correct while the merchant's own OrderRecord is
+silently wrong (a quieter failure mode than a bank-side variance). A batch with any
+open exception is NOT marked reconciled, even if match_diff == 0.
+Dataset now has 4 batches (added one to isolate timing_difference from duplicate_entry,
+since both can't coexist in one batch — TIMING_DIFFERENCE requires bridge_diff==0,
+duplicate detection requires bridge_diff!=0). All 4 injected error types verified
+independently: MISSING_REFUND_RECORD, FEE_TIER_MISMATCH (both on batch 2, as separate
+exception records), DUPLICATE_ENTRY (batch 3), TIMING_DIFFERENCE (batch 4). Batch 1
+fully clean, zero exceptions.
+AuditEvent logging confirmed on match_created and exception_created.
 
-Key signal confirmed: duplicate-entry error produces bridge_diff != 0 (entries don't
-sum to declared total) while match_diff == 0 (declared total still equals bank amount) —
-this distinguishes it from missing-refund/wrong-fee-tier errors, which show up as
-match_diff != 0 instead. This distinction is what Day 3's exception classification
-rules should key off of.
-
-Next: Day 3 — exception engine (classification rules based on bridge_diff/match_diff
-patterns) + audit trail backend.
+Next: Day 4 — FastAPI endpoints wrapping this logic (no endpoints exist yet), then
+freeze the API contract before Cursor starts frontend work.

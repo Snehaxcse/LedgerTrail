@@ -297,8 +297,9 @@ def write_to_db(batches, settlement_rows, order_rows, bank_rows):
 
     db = SessionLocal()
     try:
-        # wipe existing data so the script is safely re-runnable
-        db.query(models.AuditEvent).delete()
+        # Wipe existing data so the script is safely re-runnable. AuditEvent is
+        # deliberately excluded: it is an append-only audit log and must never be
+        # updated or deleted, even when the rest of the dataset is regenerated.
         db.query(models.ApprovalLog).delete()
         db.query(models.ExceptionRecord).delete()
         db.query(models.Match).delete()
