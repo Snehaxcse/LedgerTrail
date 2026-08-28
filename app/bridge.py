@@ -1,0 +1,77 @@
+"""
+Deterministic bridge calculation for each SettlementBatch.
+
+Read-only: computes numbers from existing database rows, writes nothing.
+Two distinct checks are made per batch:
+
+  1. Internal consistency: does summing this batch's own SettlementEntry rows
+     (bridge_net) agree with the batch's own declared total_net? A mismatch
+     here points at a problem within the settlement file itself (e.g. a
+     duplicated line item) -- it says nothing about the bank yet.
+
+  2. External reconciliation: does the batch's declared total_net agree with
+     the bank transaction matching.py linked to it? This is where a real
+     money variance would show up.
+
+No AI/LLM involvement -- every number is a sum or a subtraction over rows
+already in the database.
+"""
+from dataclasses import dataclass
+from typing import List, Optional
+
+from sqlalchemy.orm import Session
+
+from app import models
+
+VARIANCE_TOLERANCE = 0.01  # rupees, absorbs float rounding
+
+
+@dataclass
+class BridgeResult:
+    batch_id: int
+    bridge_net: float
+    total_net: float
+    matched_bank_amount: Optional[float]
+    variance: Optional[float]
+    is_reconciled: bool
+
+
+def _round2(x):
+    return round(x, 2)
+
+
+def compute_bridge(db: Session) -> List[BridgeResult]:
+    results = []
+
+    for batch in db.query(models.SettlementBatch).order_by(models.SettlementBatch.id).all():
+        entries = db.query(models.SettlementEntry).filter(models.SettlementEntry.batch_id == batch.id).all()
+
+        sum_gross = sum(e.gross_amount for e in entries)
+        sum_fee = sum(e.fee for e in entries)
+        sum_tax = sum(e.tax for e in entries)
+        sum_refund = sum(e.refund for e in entries)
+
+        bridge_net = _round2(sum_gross - sum_refund - sum_fee - sum_tax)
+        total_net = batch.total_net
+
+        matched_bank_amount = batch.bank_transaction.amount if batch.bank_transaction_id else None
+
+        if matched_bank_amount is None:
+            variance = None
+            is_reconciled = False
+        else:
+            variance = _round2(total_net - matched_bank_amount)
+            is_reconciled = abs(variance) <= VARIANCE_TOLERANCE
+
+        results.append(
+            BridgeResult(
+                batch_id=batch.id,
+                bridge_net=bridge_net,
+                total_net=total_net,
+                matched_bank_amount=matched_bank_amount,
+                variance=variance,
+                is_reconciled=is_reconciled,
+            )
+        )
+
+    return results
