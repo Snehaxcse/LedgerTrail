@@ -7,6 +7,8 @@ transaction when the transaction's amount is within AMOUNT_TOLERANCE of the
 batch's total_net and its date is within DATE_WINDOW_DAYS of the batch's
 settlement_date.
 """
+import datetime
+import json
 import logging
 from dataclasses import dataclass
 from typing import List, Optional
@@ -57,11 +59,32 @@ def _candidates_for_batch(batch, bank_transactions, amount_tolerance, date_windo
 
 
 def _reset_existing_matches(db: Session):
-    """Clears prior Match rows and batch links so this function is safely re-runnable."""
+    """Clears prior Match rows and batch links so this function is safely re-runnable.
+    Does not touch AuditEvent -- that table is append-only, never updated or deleted."""
     db.query(models.Match).delete()
     for batch in db.query(models.SettlementBatch).all():
         batch.bank_transaction_id = None
     db.commit()
+
+
+def _log_match_created(db, batch_id, bank_transaction_id, confidence_score, match_type):
+    # AuditEvent rows are append-only: never update or delete an AuditEvent once written.
+    db.add(
+        models.AuditEvent(
+            timestamp=datetime.datetime.now(),
+            actor="system",
+            action="match_created",
+            before_state=None,
+            after_state=json.dumps(
+                {
+                    "batch_id": batch_id,
+                    "bank_transaction_id": bank_transaction_id,
+                    "confidence_score": confidence_score,
+                    "match_type": match_type,
+                }
+            ),
+        )
+    )
 
 
 def run_matching(
@@ -127,6 +150,7 @@ def run_matching(
         )
         db.add(match)
         batch.bank_transaction_id = txn.id
+        _log_match_created(db, batch.id, txn.id, confidence_score, match_type)
 
         logger.info(
             "Matched batch_id=%s to bank_transaction_id=%s (%s, confidence=%s, date_diff=%s days)",

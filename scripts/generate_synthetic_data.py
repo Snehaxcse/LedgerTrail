@@ -39,11 +39,14 @@ NATURAL_REFUND_PROBABILITY = 0.12  # organic refunds unrelated to the injected e
 BATCH_CONFIGS = [
     {"batch_num": 1, "settlement_date": datetime.date(2026, 8, 20), "num_entries": 17, "timing_mismatch": False},
     {"batch_num": 2, "settlement_date": datetime.date(2026, 8, 23), "num_entries": 19, "timing_mismatch": False},
-    {"batch_num": 3, "settlement_date": datetime.date(2026, 8, 26), "num_entries": 16, "timing_mismatch": True},
+    {"batch_num": 3, "settlement_date": datetime.date(2026, 8, 26), "num_entries": 16, "timing_mismatch": False},
+    {"batch_num": 4, "settlement_date": datetime.date(2026, 8, 27), "num_entries": 15, "timing_mismatch": True},
 ]
 
 # Exactly one occurrence of each injected error type, placed by (batch_num, index in batch).
-# Batch 1 is left completely clean on purpose.
+# Each batch carries exactly one error type (batch 1 is left completely clean on
+# purpose) so a single-classification-per-batch reconciliation engine can still be
+# exercised against every error type in isolation.
 INJECTED_ROLES = {
     (2, 0): "missing_refund",
     (2, 1): "wrong_fee_tier",

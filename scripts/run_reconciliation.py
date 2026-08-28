@@ -1,6 +1,7 @@
 """
-Runs matching (app/matching.py) followed by the bridge calculation (app/bridge.py)
-across every SettlementBatch, then prints a summary table.
+Runs matching (app/matching.py), the bridge calculation (app/bridge.py), and
+exception classification (app/exceptions.py) across every SettlementBatch in
+that order, then prints two summary tables.
 
 Pure orchestration -- no computation happens in this file itself, and no AI/LLM
 involvement anywhere in the chain.
@@ -12,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.database import SessionLocal
-from app import matching, bridge
+from app import matching, bridge, exceptions
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -62,6 +63,39 @@ def main():
         unmatched = [r for r in match_results if not r.matched]
         unreconciled = [r for r in bridge_results if not r.is_reconciled]
         print(f"Summary: {len(match_results)} batches, {len(unmatched)} unmatched, {len(unreconciled)} not reconciled.")
+
+        exception_results = exceptions.classify_exceptions(db)
+
+        print()
+        print("Exception classification:")
+        exc_columns = [
+            ("batch_id", 9),
+            ("reconciled", 11),
+            ("classification", 24),
+            ("requires_approval", 18),
+        ]
+        exc_header = "".join(name.rjust(width) for name, width in exc_columns)
+        print(exc_header + "  suggested_action")
+        print("-" * (len(exc_header) + 2 + len("suggested_action")))
+
+        for er in exception_results:
+            row = [
+                str(er.batch_id),
+                "yes" if er.is_reconciled else "no",
+                er.classification or "-",
+                "yes" if er.requires_approval else "no",
+            ]
+            line = "".join(cell.rjust(width) for cell, (_, width) in zip(row, exc_columns))
+            print(f"{line}  {er.suggested_action or '-'}")
+
+        print()
+        distinct_batches = {r.batch_id for r in exception_results}
+        needs_approval = [r for r in exception_results if r.requires_approval]
+        blocked = [r for r in exception_results if r.blocks_reconciliation]
+        print(
+            f"Summary: {len(distinct_batches)} batches, {len(exception_results)} exception rows, "
+            f"{len(needs_approval)} require approval, {len(blocked)} block reconciliation."
+        )
     finally:
         db.close()
 

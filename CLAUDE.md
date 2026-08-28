@@ -61,15 +61,19 @@ Frontend: React + Tailwind (built separately in Cursor — API contract only)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-Day 1 complete and verified: 8-table schema finalized (SettlementBatch added,
-single-sided unique FK to BankTransaction, OrderRecord.fee_amount added,
-ExceptionRecord renamed). Synthetic dataset generated: 3 batches, ~50-60 order-level
-entries, 4 injected error types (missing refund, wrong fee tier, duplicate entry,
-timing mismatch), one fully clean batch. Ingestion from raw CSV verified against
-a fresh empty database, with duplicate-entry preserved (not deduplicated).
-ground_truth.json confirmed accurate.
+Day 2 complete and verified: matching engine (app/matching.py) and bridge calculation
+(app/bridge.py) working. Match table is batch-level only (settlement_batch_id, not
+settlement_entry_id) — a BankTransaction settles one whole batch, never a single order.
+Fixed a real bug: ingest.py originally derived SettlementBatch.total_net by summing
+SettlementEntry rows, which double-counted the injected duplicate. Added
+data/settlement_batches.csv as Razorpay's declared totals (separate from entry-level
+data) — ingest.py now reads declared totals directly instead of deriving them.
 
-Next: Day 2 — deterministic matching engine (settlement batch ↔ bank transaction,
-by amount/date window/reference) and gross-to-net bridge calculation
-(Gross − Refunds − Fees − Tax = Net, compared against matched bank transaction).
-No AI/LLM calls anywhere in this logic — pure deterministic Python.
+Key signal confirmed: duplicate-entry error produces bridge_diff != 0 (entries don't
+sum to declared total) while match_diff == 0 (declared total still equals bank amount) —
+this distinguishes it from missing-refund/wrong-fee-tier errors, which show up as
+match_diff != 0 instead. This distinction is what Day 3's exception classification
+rules should key off of.
+
+Next: Day 3 — exception engine (classification rules based on bridge_diff/match_diff
+patterns) + audit trail backend.
