@@ -52,6 +52,28 @@ CLASSIFICATION_INFO = {
         "blocks_reconciliation": False,
         "suggested_action": "No action required — settlement date and bank credit date differ due to processing lag.",
     },
+    # SYSTEMIC_FEE_DRIFT / SYSTEMIC_REFUND_DRIFT are produced by a separate pass
+    # (app/anomaly_detection.py), not by _classify_batch below -- added here only
+    # so requires_approval/blocks_reconciliation/suggested_action resolve correctly
+    # wherever CLASSIFICATION_INFO is looked up (is_reconciled computation,
+    # GET /batches/{id}/exceptions). No existing entry above was changed, and no
+    # existing classification logic in this file was touched to add these.
+    "SYSTEMIC_FEE_DRIFT": {
+        "requires_approval": True,
+        "blocks_reconciliation": True,
+        "suggested_action": (
+            "Review this batch's fee/refund rate against historical pattern — "
+            "statistically anomalous even though it reconciles cleanly on its own."
+        ),
+    },
+    "SYSTEMIC_REFUND_DRIFT": {
+        "requires_approval": True,
+        "blocks_reconciliation": True,
+        "suggested_action": (
+            "Review this batch's fee/refund rate against historical pattern — "
+            "statistically anomalous even though it reconciles cleanly on its own."
+        ),
+    },
 }
 
 

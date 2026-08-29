@@ -35,6 +35,7 @@ FEE_TIERS = [
 ]
 GST_RATE = 0.18  # GST charged on the payment gateway fee, standard Indian practice.
 NATURAL_REFUND_PROBABILITY = 0.12  # organic refunds unrelated to the injected error
+FEE_DRIFT_MULTIPLIER = 1.20  # ~20% systemic fee drift, applied uniformly across a batch
 
 BATCH_CONFIGS = [
     {"batch_num": 1, "settlement_date": datetime.date(2026, 8, 20), "num_entries": 17, "timing_mismatch": False},
@@ -49,7 +50,10 @@ BATCH_CONFIGS = [
     {"batch_num": 6, "settlement_date": datetime.date(2026, 9, 10), "num_entries": 16, "timing_mismatch": False},
     {"batch_num": 7, "settlement_date": datetime.date(2026, 9, 24), "num_entries": 19, "timing_mismatch": False},
     {"batch_num": 8, "settlement_date": datetime.date(2026, 10, 8), "num_entries": 17, "timing_mismatch": False},
-    {"batch_num": 9, "settlement_date": datetime.date(2026, 10, 22), "num_entries": 15, "timing_mismatch": False},
+    # fee_drift is applied as a deterministic post-processing step on batch 9's
+    # already-generated rows (see apply_fee_drift) -- it consumes NO random draws,
+    # so it cannot shift any other batch's data regardless of position.
+    {"batch_num": 9, "settlement_date": datetime.date(2026, 10, 22), "num_entries": 15, "timing_mismatch": False, "fee_drift": True},
     {"batch_num": 10, "settlement_date": datetime.date(2026, 11, 5), "num_entries": 18, "timing_mismatch": False},
 ]
 
@@ -89,6 +93,28 @@ INJECTED_ROLES = {
 
 def round2(x):
     return round(x, 2)
+
+
+def apply_fee_drift(batch_settlement_rows, batch_order_rows):
+    """Increases every entry's fee by FEE_DRIFT_MULTIPLIER (~20%) and mirrors the
+    SAME drifted value into the matching OrderRecord.fee_amount, so nothing looks
+    wrong from the order system's own perspective -- no per-order FEE_TIER_MISMATCH
+    fires, since entry.fee and order.fee_amount agree with each other. The drift is
+    only visible as a batch-wide statistical outlier (see app/anomaly_detection.py).
+    Mutates both lists of dicts in place. Pure arithmetic -- consumes no random()
+    calls, so it cannot affect any other batch's data."""
+    order_by_ref = {o["order_ref"]: o for o in batch_order_rows}
+
+    for row in batch_settlement_rows:
+        drifted_fee = round2(row["fee"] * FEE_DRIFT_MULTIPLIER)
+        drifted_tax = round2(drifted_fee * GST_RATE)
+        row["fee"] = drifted_fee
+        row["tax"] = drifted_tax
+        row["net_amount"] = round2(row["gross_amount"] - drifted_fee - drifted_tax - row["refund"])
+
+        order = order_by_ref.get(row["order_ref"])
+        if order is not None:
+            order["fee_amount"] = drifted_fee
 
 
 def fee_rate_for_amount(amount):
@@ -173,6 +199,8 @@ def build_dataset():
     for cfg in BATCH_CONFIGS:
         batch_num = cfg["batch_num"]
         orders = build_batch_orders(batch_num, cfg["num_entries"])
+        batch_settlement_start = len(settlement_rows)
+        batch_order_start = len(order_rows)
 
         batch_total_gross = 0.0
         batch_total_fees = 0.0
@@ -275,6 +303,18 @@ def build_dataset():
             batch_total_tax += settlement_tax
             batch_total_refunds += order["refund"]
             batch_total_net += settlement_net
+
+        if cfg.get("fee_drift"):
+            batch_settlement_rows = settlement_rows[batch_settlement_start:]
+            batch_order_rows = order_rows[batch_order_start:]
+            apply_fee_drift(batch_settlement_rows, batch_order_rows)
+            # Totals must reflect the drifted fees, not the pre-drift accumulation
+            # above -- re-derive them from the (now mutated) rows rather than patch
+            # the running sums, since that's less error-prone than tracking deltas.
+            batch_total_fees = sum(r["fee"] for r in batch_settlement_rows)
+            batch_total_tax = sum(r["tax"] for r in batch_settlement_rows)
+            batch_total_net = sum(r["net_amount"] for r in batch_settlement_rows)
+            # gross and refunds are untouched by fee drift -- no change needed.
 
         batch_total_gross = round2(batch_total_gross)
         batch_total_fees = round2(batch_total_fees)
