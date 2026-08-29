@@ -90,10 +90,11 @@ def main():
 
         print()
         distinct_batches = {r.batch_id for r in exception_results}
-        needs_approval = [r for r in exception_results if r.requires_approval]
-        blocked = [r for r in exception_results if r.blocks_reconciliation]
+        actual_exceptions = [r for r in exception_results if r.classification is not None]
+        needs_approval = [r for r in actual_exceptions if r.requires_approval]
+        blocked = [r for r in actual_exceptions if r.blocks_reconciliation]
         print(
-            f"Summary: {len(distinct_batches)} batches, {len(exception_results)} exception rows, "
+            f"Summary: {len(distinct_batches)} batches, {len(actual_exceptions)} exception rows, "
             f"{len(needs_approval)} require approval, {len(blocked)} block reconciliation."
         )
     finally:
