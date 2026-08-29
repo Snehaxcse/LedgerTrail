@@ -33,6 +33,9 @@ export default function Layout({ children }) {
             <NavLink to="/" end className={navClass}>
               Batches
             </NavLink>
+            <NavLink to="/transparency" className={navClass}>
+              Transparency
+            </NavLink>
             <NavLink to="/audit" className={navClass}>
               Audit trail
             </NavLink>

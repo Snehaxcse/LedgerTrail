@@ -35,6 +35,10 @@ export function getAuditTrail({ limit = 50, offset = 0 } = {}) {
   return api(`/audit-trail?limit=${limit}&offset=${offset}`)
 }
 
+export function getTransparency() {
+  return api('/transparency')
+}
+
 export async function getExceptionIndex() {
   const batches = await getBatches()
   const lists = await Promise.all(batches.map((batch) => getBatchExceptions(batch.id)))
