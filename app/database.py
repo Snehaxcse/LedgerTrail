@@ -18,6 +18,11 @@ def ensure_schema():
         if cols and "reason" not in col_names:
             conn.execute(text("ALTER TABLE approval_logs ADD COLUMN reason VARCHAR"))
 
+        cols = conn.execute(text("PRAGMA table_info(exceptions)")).fetchall()
+        col_names = {row[1] for row in cols}
+        if cols and "ai_explanation" not in col_names:
+            conn.execute(text("ALTER TABLE exceptions ADD COLUMN ai_explanation TEXT"))
+
 
 def get_db():
     db = SessionLocal()

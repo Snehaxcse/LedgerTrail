@@ -4,11 +4,19 @@
 AI NEVER performs or touches arithmetic anywhere in this codebase.
 All matching, bridge calculation, and exception detection is deterministic Python.
 AI is only used for: explaining exception packets in plain language,
-NL query over precomputed facts, drafting approval-brief narrative text.
+NL query over precomputed facts (planned), drafting approval-brief narrative text (planned).
+Every AI-generated response must be programmatically verified — every number it states
+must be checked against the source data before being shown; if unverifiable, discard
+and use a safe fallback template instead.
 
 ## Tech stack
 Backend: Python + FastAPI + SQLAlchemy + SQLite
 Frontend: React + Tailwind (built separately in Cursor — API contract only)
+In-product AI layer: Anthropic API, Claude Haiku (claude-haiku-4-5-20251001) — used ONLY
+for the explanation/NL-query features below. Paid tier ($5 added), no free-tier quota
+walls. (Claude Code and Cursor, which write this codebase, are the same underlying
+provider but a separate, tooling-level use — not part of the running product's own
+API calls.)
 
 ## Data model (final — confirmed Day 1)
 
@@ -62,12 +70,31 @@ Frontend: React + Tailwind (built separately in Cursor — API contract only)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-Day 5, Transparency Panel complete: GET /transparency computes detection rate live
-from ground_truth.json vs actual ExceptionRecords (verified by deliberately deleting
-and injecting fake exceptions, confirming counts respond correctly, then restoring).
-Frontend panel shows 4/4 detected, 0 false positives, per-error expected/actual table.
-False-positive count is designed to visually escalate (rust callout) if it's ever > 0,
-rather than blending into the same "pass" styling.
+Buildathon deadline extended: 15 days total from Aug 29, 2026 (previously 5).
+Tier 0 + Tier 1 fully complete and verified — the entire original 5-day scope,
+demo-ready. Demo data staged: Missing Refund Record (Batch 2) pre-approved as a
+"before" example; Fee Tier Mismatch (Batch 2) and Duplicate Entry (Batch 3) left
+open for live demo; Timing Difference (Batch 4) needs no action. App is staged,
+not a sandbox — no exploratory clicking without a deliberate reset
+(scripts/run_reconciliation.py) afterward.
 
-Next: reset demo data to a clean deliberate state, formal accuracy write-up,
-full demo rehearsal.
+AI Explanation Layer (New Day 1): app/ai_explain.py, ExceptionRecord.ai_explanation
+column, and GET /batches/{id}/exceptions/{id}/explain are built.
+
+PROVIDER HISTORY (so future-you isn't confused by old references): originally built
+against Anthropic, briefly switched to Google Gemini free tier, then REVERTED back
+to Anthropic (paid, $5 added) after Gemini's free-tier RPD (20/day) and a
+default "thinking" mode silently consuming the entire output token budget caused
+3 of 4 real exceptions to fail. Anthropic is correct and final as of this note —
+if you see any Gemini references elsewhere in this file or the code, they're stale
+and should be corrected to Anthropic.
+
+Known fix carried forward regardless of provider: max_output_tokens must be 500,
+not 300 — Missing Refund Record's prompt (2 rows x 5 fields) is structurally tight
+against 300 tokens. Also: always check finish_reason/stop_reason — a truncated
+response with zero numbers can pass the numeric-verification check by accident
+(no numbers to flag != trustworthy), so truncation must be caught explicitly.
+
+Next: verify the reverted Anthropic implementation against all 4 real exceptions,
+including Missing Refund Record (never successfully got a real AI explanation
+during the Gemini attempt due to quota exhaustion).

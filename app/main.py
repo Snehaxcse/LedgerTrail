@@ -7,6 +7,7 @@ classification and never discards a prior approval.
 """
 import datetime
 import json
+import logging
 from pathlib import Path
 from typing import Any, List, Literal, Optional
 
@@ -15,8 +16,15 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app import bridge, models
+from app.ai_explain import generate_explanation
 from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
+
+# Without this, "ledgertrail.ai_explain"'s path=ai_generated/path=fallback logs
+# (an explicit requirement, to track how often the fallback triggers) have no
+# handler attached under uvicorn and are silently dropped -- discovered while
+# testing, since a fresh (non-cached) call produced no log output at all.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 app = FastAPI(title="LedgerTrail")
 ensure_schema()
@@ -159,6 +167,17 @@ class TransparencyResponse(BaseModel):
     summary: TransparencySummary
 
 
+class ExplainResponse(BaseModel):
+    exception_id: int
+    explanation: str
+    source: Literal["ai_generated", "fallback"]
+    # Additive beyond the spec's two-value source field, purely for test observability
+    # (per "so we can see this during testing") -- distinguishes a fresh ai_generated
+    # call from one served out of the ai_explanation cache without changing what
+    # `source` means. Flagging this since it wasn't explicitly requested.
+    cached: bool
+
+
 # ---------- helpers ----------
 
 def _match_for_batch(db: Session, batch_id: int) -> Optional[models.Match]:
@@ -288,23 +307,20 @@ def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db)):
     return out
 
 
-@app.get("/batches/{batch_id}/evidence", response_model=EvidenceOut)
-def get_batch_evidence(batch_id: int, db: Session = Depends(get_db)):
-    _get_batch_or_404(db, batch_id)
-    exception_rows = (
-        db.query(models.ExceptionRecord).filter(models.ExceptionRecord.batch_id == batch_id).all()
-    )
-
+def _extract_evidence_ids(linked_evidence_ids_json: Optional[str]):
+    """Parses one ExceptionRecord's linked_evidence_ids JSON into typed id sets."""
     entry_ids, order_ids, bank_ids = set(), set(), set()
-    for e in exception_rows:
-        for item in (json.loads(e.linked_evidence_ids) if e.linked_evidence_ids else []):
-            if item["type"] == "settlement_entry":
-                entry_ids.add(item["id"])
-            elif item["type"] == "order_record":
-                order_ids.add(item["id"])
-            elif item["type"] == "bank_transaction":
-                bank_ids.add(item["id"])
+    for item in (json.loads(linked_evidence_ids_json) if linked_evidence_ids_json else []):
+        if item["type"] == "settlement_entry":
+            entry_ids.add(item["id"])
+        elif item["type"] == "order_record":
+            order_ids.add(item["id"])
+        elif item["type"] == "bank_transaction":
+            bank_ids.add(item["id"])
+    return entry_ids, order_ids, bank_ids
 
+
+def _resolve_evidence(db: Session, entry_ids, order_ids, bank_ids) -> EvidenceOut:
     entries = (
         db.query(models.SettlementEntry).filter(models.SettlementEntry.id.in_(entry_ids)).all()
         if entry_ids
@@ -320,8 +336,24 @@ def get_batch_evidence(batch_id: int, db: Session = Depends(get_db)):
         if bank_ids
         else []
     )
-
     return EvidenceOut(settlement_entries=entries, order_records=orders, bank_transactions=bank_txns)
+
+
+@app.get("/batches/{batch_id}/evidence", response_model=EvidenceOut)
+def get_batch_evidence(batch_id: int, db: Session = Depends(get_db)):
+    _get_batch_or_404(db, batch_id)
+    exception_rows = (
+        db.query(models.ExceptionRecord).filter(models.ExceptionRecord.batch_id == batch_id).all()
+    )
+
+    entry_ids, order_ids, bank_ids = set(), set(), set()
+    for e in exception_rows:
+        e_entry_ids, e_order_ids, e_bank_ids = _extract_evidence_ids(e.linked_evidence_ids)
+        entry_ids |= e_entry_ids
+        order_ids |= e_order_ids
+        bank_ids |= e_bank_ids
+
+    return _resolve_evidence(db, entry_ids, order_ids, bank_ids)
 
 
 @app.post("/exceptions/{exception_id}/approve", response_model=ApprovalResponse)
@@ -454,3 +486,41 @@ def get_transparency(db: Session = Depends(get_db)):
     )
 
     return TransparencyResponse(planted_errors=planted_errors_out, summary=summary)
+
+
+@app.get("/batches/{batch_id}/exceptions/{exception_id}/explain", response_model=ExplainResponse)
+def explain_exception(batch_id: int, exception_id: int, db: Session = Depends(get_db)):
+    _get_batch_or_404(db, batch_id)
+    exc = (
+        db.query(models.ExceptionRecord)
+        .filter(models.ExceptionRecord.id == exception_id, models.ExceptionRecord.batch_id == batch_id)
+        .first()
+    )
+    if exc is None:
+        raise HTTPException(
+            status_code=404, detail=f"ExceptionRecord {exception_id} not found on batch {batch_id}"
+        )
+
+    if exc.ai_explanation:
+        return ExplainResponse(
+            exception_id=exc.id, explanation=exc.ai_explanation, source="ai_generated", cached=True
+        )
+
+    entry_ids, order_ids, bank_ids = _extract_evidence_ids(exc.linked_evidence_ids)
+    evidence = _resolve_evidence(db, entry_ids, order_ids, bank_ids)
+
+    exception_record = {
+        "classification": exc.classification,
+        "unexplained_amount": exc.unexplained_amount,
+        "suggested_action": exc.suggested_action,
+    }
+    result = generate_explanation(exception_record, evidence.model_dump())
+
+    # Only cache a validated AI response. A fallback is never cached, so a transient
+    # API failure or a rejected response gets retried on the next call instead of
+    # being locked in permanently.
+    if result.source == "ai_generated":
+        exc.ai_explanation = result.text
+        db.commit()
+
+    return ExplainResponse(exception_id=exc.id, explanation=result.text, source=result.source, cached=False)
