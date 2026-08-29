@@ -1,0 +1,89 @@
+import { formatClassification, formatInr, formatPercent } from './format'
+
+function parseState(raw) {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function titleAction(action) {
+  return String(action || '')
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
+export function formatBatchLabel(batchId) {
+  if (batchId == null) return null
+  return `Batch ${String(batchId).padStart(2, '0')}`
+}
+
+function subjectLabel(classification, batchId) {
+  const name = classification ? formatClassification(classification) : null
+  const batch = formatBatchLabel(batchId)
+  if (name && batch) return `${name} (${batch})`
+  if (name) return name
+  if (batch) return batch
+  return 'Exception'
+}
+
+export function resolveAuditContext(event, index = { byId: {}, byClassification: {} }) {
+  const after = parseState(event.after_state) || {}
+  if (after.exception_id != null && index.byId[after.exception_id]) {
+    return index.byId[after.exception_id]
+  }
+  if (after.classification) {
+    const matches = index.byClassification[after.classification] || []
+    if (matches.length === 1) return matches[0]
+  }
+  if (after.batch_id != null) {
+    return { batch_id: after.batch_id, classification: after.classification || null }
+  }
+  return null
+}
+
+export function describeAuditEvent(event, index) {
+  const after = parseState(event.after_state)
+  const before = parseState(event.before_state)
+  const context = resolveAuditContext(event, index)
+  const batchId = context?.batch_id ?? after?.batch_id
+  const classification = context?.classification ?? after?.classification
+
+  if (event.action === 'match_created') {
+    const type = after?.match_type
+    const percent = formatPercent(after?.confidence_score)
+    const batch = formatBatchLabel(batchId)
+    if (batch && type && percent) return `Match created for ${batch} (${type}, ${percent})`
+    if (batch) return `Match created for ${batch}`
+    return 'Match created'
+  }
+
+  if (event.action === 'exception_created') {
+    const amount = after?.unexplained_amount
+    const amountText =
+      amount === null || amount === undefined ? '' : ` · unexplained ${formatInr(amount)}`
+    return `Exception created: ${subjectLabel(classification, batchId)}${amountText}`
+  }
+
+  if (event.action === 'exception_reviewed') {
+    const who = after?.approver || 'unknown'
+    const decision = after?.decision || after?.status
+    const reason = after?.reason
+    const subject = subjectLabel(classification, batchId)
+    if (decision === 'rejected') {
+      return reason ? `${subject} rejected by ${who}: ${reason}` : `${subject} rejected by ${who}`
+    }
+    if (decision === 'approved') {
+      return `${subject} approved by ${who}`
+    }
+    if (before?.status && after?.status) {
+      return `${subject} ${before.status} → ${after.status} by ${who}`
+    }
+    return `${subject} reviewed by ${who}`
+  }
+
+  return titleAction(event.action)
+}

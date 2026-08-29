@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 
 function Mark() {
   return (
@@ -12,6 +12,12 @@ function Mark() {
   )
 }
 
+function navClass({ isActive }) {
+  return `text-sm no-underline ${
+    isActive ? 'font-semibold text-ink' : 'text-ink-muted hover:text-ink'
+  }`
+}
+
 export default function Layout({ children }) {
   return (
     <div className="min-h-svh">
@@ -23,7 +29,14 @@ export default function Layout({ children }) {
               Ledger<i className="not-italic text-forest">Trail</i>
             </span>
           </Link>
-          <p className="hidden text-sm text-ink-muted sm:block">Settlement reconciliation</p>
+          <nav className="flex items-center gap-5">
+            <NavLink to="/" end className={navClass}>
+              Batches
+            </NavLink>
+            <NavLink to="/audit" className={navClass}>
+              Audit trail
+            </NavLink>
+          </nav>
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl px-5 py-8">{children}</main>

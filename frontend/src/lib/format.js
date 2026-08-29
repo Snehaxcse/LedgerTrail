@@ -25,6 +25,33 @@ export function formatScore(value) {
   return Number(value).toFixed(2)
 }
 
+export function formatPercent(value) {
+  if (value === null || value === undefined) return null
+  return new Intl.NumberFormat('en-IN', {
+    style: 'percent',
+    maximumFractionDigits: 0,
+  }).format(Number(value))
+}
+
+export function formatDateTime(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+export function formatMatchLine(matchType, confidenceScore) {
+  if (!matchType && (confidenceScore === null || confidenceScore === undefined)) return null
+  const type = matchType || 'unknown'
+  const percent = formatPercent(confidenceScore)
+  return percent ? `Matched: ${type} (${percent})` : `Matched: ${type}`
+}
+
 export function formatClassification(code) {
   if (!code) return '—'
   return code
