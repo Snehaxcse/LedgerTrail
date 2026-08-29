@@ -1,0 +1,44 @@
+[
+  {
+    "n": 1,
+    "question": "Why isn't batch 2 reconciled?",
+    "answer": "I don't have that information in the current data.\n\nThe data shows that Batch 2 has is_reconciled=False, but it does not explicitly state the reason why it is not reconciled. While there are two exceptions listed for Batch 2 (a missing refund record and a fee tier mismatch), the data does not specify whether these exceptions are the cause of the batch not being reconciled, or if there is another reason.",
+    "source": "out_of_scope"
+  },
+  {
+    "n": 2,
+    "question": "Which batches have open exceptions?",
+    "answer": "Based on the settlement reconciliation data, the batches with open exceptions are:\n\nBatch 2 has one open exception classified as FEE_TIER_MISMATCH with an unexplained amount of Rs.3.49. The suggested action is to compare the charged fee against the contracted fee tier and escalate to Razorpay support if confirmed.\n\nBatch 3 has one open exception classified as DUPLICATE_ENTRY with an unexplained amount of Rs.0.0. The suggested action is to remove the duplicate settlement entry and confirm no double-posting occurred.\n\nBatch 4 has one open exception classified as TIMING_DIFFERENCE with an unexplained amount of Rs.0.0. The suggested action indicates no action is required, as the settlement date and bank credit date differ due to processing lag.",
+    "source": "answered"
+  },
+  {
+    "n": 3,
+    "question": "What's the total unexplained amount across all batches?",
+    "answer": "I wasn't able to verify part of that answer, so I can't show it. Try rephrasing your question or ask about a specific batch.",
+    "source": "unverifiable"
+  },
+  {
+    "n": 4,
+    "question": "What is Razorpay's refund policy?",
+    "answer": "I don't have that information in the current data.\n\nThe settlement reconciliation data provided contains details about refund amounts processed in specific batches, but it does not include information about Razorpay's refund policy.",
+    "source": "out_of_scope"
+  },
+  {
+    "n": 5,
+    "question": "Should I approve the fee tier mismatch?",
+    "answer": "I don't have that information in the current data.\n\nThe data shows that the fee tier mismatch exception for Batch 2 has a status of \"open\" and suggests comparing the charged fee against the contracted fee tier, with escalation to Razorpay support if confirmed. However, the data does not contain any recommendation or guidance on whether you should approve this exception. That decision would require information beyond what is provided in this settlement reconciliation data.",
+    "source": "out_of_scope"
+  },
+  {
+    "n": 6,
+    "question": "What's the weather today?",
+    "answer": "I don't have that information in the current data.",
+    "source": "out_of_scope"
+  },
+  {
+    "n": 7,
+    "question": "What will next month's settlement look like?",
+    "answer": "I don't have that information in the current data.\n\nThe data provided contains settlement reconciliation records for specific batches with settlement dates in August 2026, but it does not include any information about future settlements or projections for next month.",
+    "source": "out_of_scope"
+  }
+]

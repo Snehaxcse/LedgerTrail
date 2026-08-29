@@ -19,6 +19,7 @@ from app import bridge, models
 from app.ai_explain import generate_explanation
 from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
+from app.nl_query import answer_query
 
 # Without this, "ledgertrail.ai_explain"'s path=ai_generated/path=fallback logs
 # (an explicit requirement, to track how often the fallback triggers) have no
@@ -176,6 +177,15 @@ class ExplainResponse(BaseModel):
     # call from one served out of the ai_explanation cache without changing what
     # `source` means. Flagging this since it wasn't explicitly requested.
     cached: bool
+
+
+class QueryRequest(BaseModel):
+    question: str
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    source: Literal["answered", "unverifiable", "out_of_scope"]
 
 
 # ---------- helpers ----------
@@ -524,3 +534,40 @@ def explain_exception(batch_id: int, exception_id: int, db: Session = Depends(ge
         db.commit()
 
     return ExplainResponse(exception_id=exc.id, explanation=result.text, source=result.source, cached=False)
+
+
+@app.post("/query", response_model=QueryResponse)
+def query(body: QueryRequest, db: Session = Depends(get_db)):
+    """No caching by design: free-text questions won't repeat meaningfully, so
+    every call gathers fresh context and calls the model fresh."""
+    batches = list_batches(db)
+
+    all_exceptions = []
+    for batch in batches:
+        for exc in get_batch_exceptions(batch.id, db):
+            all_exceptions.append(
+                {
+                    "batch_id": exc.batch_id,
+                    "classification": exc.classification,
+                    "unexplained_amount": exc.unexplained_amount,
+                    "status": exc.status,
+                    "suggested_action": exc.suggested_action,
+                }
+            )
+
+    # Precomputed in plain Python, not by the AI -- lets answer_query correctly
+    # answer aggregate questions ("what's the total unexplained amount") using a
+    # number this code already calculated and verified, instead of either
+    # refusing or (worse) calculating it itself, which the system prompt forbids.
+    total_unexplained_amount = round(
+        sum(e["unexplained_amount"] for e in all_exceptions if e["status"] == "open"), 2
+    )
+
+    context_data = {
+        "batches": [b.model_dump() for b in batches],
+        "exceptions": all_exceptions,
+        "total_unexplained_amount": total_unexplained_amount,
+    }
+
+    result = answer_query(body.question, context_data)
+    return QueryResponse(answer=result.text, source=result.source)

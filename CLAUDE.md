@@ -98,3 +98,15 @@ response with zero numbers can pass the numeric-verification check by accident
 Next: verify the reverted Anthropic implementation against all 4 real exceptions,
 including Missing Refund Record (never successfully got a real AI explanation
 during the Gemini attempt due to quota exhaustion).
+
+## Operational notes (learned the hard way — don't relearn these)
+1. Run uvicorn with --reload during development. Without it, a running server
+   keeps executing old code from memory even after files change on disk.
+2. ai_explanation is cached per-exception in the database. After any prompt/logic
+   change in ai_explain.py, clearing old cached values is a SEPARATE required step
+   (UPDATE exceptions SET ai_explanation = NULL) — restarting the server alone does
+   NOT clear already-cached database values. Clicking "Generate explanation" on an
+   exception that already has a cached value returns the cache, not a fresh call.
+3. AI explanation system prompt must explicitly forbid Markdown formatting
+   (no #, **, or list markers) — plain prose only, since the frontend displays
+   the text as-is with no Markdown rendering.
