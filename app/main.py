@@ -7,7 +7,8 @@ classification and never discards a prior approval.
 """
 import datetime
 import json
-from typing import List, Literal, Optional
+from pathlib import Path
+from typing import Any, List, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -21,6 +22,19 @@ app = FastAPI(title="LedgerTrail")
 ensure_schema()
 
 VARIANCE_TOLERANCE = bridge.VARIANCE_TOLERANCE
+
+GROUND_TRUTH_PATH = Path(__file__).resolve().parent.parent / "data" / "ground_truth.json"
+
+# ground_truth.json's error "type" strings (chosen by the synthetic data generator)
+# are a different naming convention from ExceptionRecord.classification (chosen by
+# the classification engine) -- this mapping is the only place the two are tied
+# together. Hardcoded, never AI-generated, same as CLASSIFICATION_INFO.
+GROUND_TRUTH_TYPE_TO_CLASSIFICATION = {
+    "missing_refund": "MISSING_REFUND_RECORD",
+    "wrong_fee_tier": "FEE_TIER_MISMATCH",
+    "duplicate_entry": "DUPLICATE_ENTRY",
+    "timing_mismatch": "TIMING_DIFFERENCE",
+}
 
 
 # ---------- schemas ----------
@@ -121,6 +135,28 @@ class AuditTrailResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class PlantedErrorOut(BaseModel):
+    type: str
+    batch_id: int
+    order_ref: Optional[str]
+    expected_value: Any
+    actual_value: Any
+    detected: bool
+    detected_classification: Optional[str]
+
+
+class TransparencySummary(BaseModel):
+    total_planted: int
+    total_detected: int
+    false_positives: int
+    detection_rate: str
+
+
+class TransparencyResponse(BaseModel):
+    planted_errors: List[PlantedErrorOut]
+    summary: TransparencySummary
 
 
 # ---------- helpers ----------
@@ -357,3 +393,64 @@ def get_audit_trail(limit: int = 50, offset: int = 0, db: Session = Depends(get_
     )
 
     return AuditTrailResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@app.get("/transparency", response_model=TransparencyResponse)
+def get_transparency(db: Session = Depends(get_db)):
+    """Compares the synthetic dataset's planted errors (ground_truth.json) against
+    what the classification engine actually recorded in ExceptionRecord right now.
+    Both sides are read fresh on every call -- nothing here is cached or hardcoded,
+    so this number is only ever as good as the current data and current logic."""
+    if not GROUND_TRUTH_PATH.exists():
+        raise HTTPException(status_code=500, detail=f"ground_truth.json not found at {GROUND_TRUTH_PATH}")
+
+    with open(GROUND_TRUTH_PATH, encoding="utf-8") as f:
+        ground_truth = json.load(f)
+
+    all_exceptions = db.query(models.ExceptionRecord).all()
+    exceptions_by_batch = {}
+    for e in all_exceptions:
+        exceptions_by_batch.setdefault(e.batch_id, []).append(e)
+
+    planted_errors_out = []
+    expected_pairs = set()  # (batch_id, classification) pairs a planted error accounts for
+
+    for entry in ground_truth:
+        raw_type = entry["type"]
+        expected_classification = GROUND_TRUTH_TYPE_TO_CLASSIFICATION.get(raw_type)
+        batch_id = entry["batch_id"]
+
+        detected = False
+        detected_classification = None
+        if expected_classification is not None:
+            expected_pairs.add((batch_id, expected_classification))
+            for e in exceptions_by_batch.get(batch_id, []):
+                if e.classification == expected_classification:
+                    detected = True
+                    detected_classification = e.classification
+                    break
+
+        planted_errors_out.append(
+            PlantedErrorOut(
+                type=expected_classification or raw_type,
+                batch_id=batch_id,
+                order_ref=entry.get("order_ref"),
+                expected_value=entry.get("expected_value"),
+                actual_value=entry.get("actual_value"),
+                detected=detected,
+                detected_classification=detected_classification,
+            )
+        )
+
+    total_planted = len(ground_truth)
+    total_detected = sum(1 for p in planted_errors_out if p.detected)
+    false_positives = sum(1 for e in all_exceptions if (e.batch_id, e.classification) not in expected_pairs)
+
+    summary = TransparencySummary(
+        total_planted=total_planted,
+        total_detected=total_detected,
+        false_positives=false_positives,
+        detection_rate=f"{total_detected}/{total_planted}",
+    )
+
+    return TransparencyResponse(planted_errors=planted_errors_out, summary=summary)

@@ -62,19 +62,13 @@ Frontend: React + Tailwind (built separately in Cursor — API contract only)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-Day 3 complete and verified: exception engine (app/exceptions.py) with independent,
-non-mutually-exclusive classification per batch. Refund/fee checks decoupled from
-match_diff — they scan every batch regardless of bank-side variance, since Razorpay's
-declared total can be internally correct while the merchant's own OrderRecord is
-silently wrong (a quieter failure mode than a bank-side variance). A batch with any
-open exception is NOT marked reconciled, even if match_diff == 0.
-Dataset now has 4 batches (added one to isolate timing_difference from duplicate_entry,
-since both can't coexist in one batch — TIMING_DIFFERENCE requires bridge_diff==0,
-duplicate detection requires bridge_diff!=0). All 4 injected error types verified
-independently: MISSING_REFUND_RECORD, FEE_TIER_MISMATCH (both on batch 2, as separate
-exception records), DUPLICATE_ENTRY (batch 3), TIMING_DIFFERENCE (batch 4). Batch 1
-fully clean, zero exceptions.
-AuditEvent logging confirmed on match_created and exception_created.
+Day 4 complete and verified: full frontend built in Cursor against the frozen API —
+dashboard (reconciled/not-reconciled banners driven strictly by is_reconciled, never
+by variance alone), bridge view (Gross→Net breakdown, confidence score, matched/unmatched
+bank status), exception queue with approval flow (reject requires a reason, enforced
+server-side and shown in UI), and a full audit trail view (chronological, human-readable,
+every entry shows batch + classification context).
 
-Next: Day 4 — FastAPI endpoints wrapping this logic (no endpoints exist yet), then
-freeze the API contract before Cursor starts frontend work.
+Next: Day 5 — Injected-Error Transparency Panel (Tier 2), formal accuracy write-up
+(precision/recall by error type), demo data reset to a clean deliberate state,
+full rehearsal of the 3 demo moments.
