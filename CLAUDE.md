@@ -70,17 +70,16 @@ API calls.)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-New Day 4 complete: dataset expanded from 4 to 10 settlement batches (Aug 20 - Nov 5
-2026). Batches 1-4 confirmed byte-identical to pre-expansion state (verified via
-snapshot diff, not assumed) — seed-ordering holds because new batches are appended
-after existing ones in generation order, not interleaved. Batches 5-10 are clean
-(no injected errors) by design, so the 4/4 detection rate and every previously
-verified number are unchanged. GET /trend endpoint (reuses _batch_summary, no
-duplicated reconciliation logic) + "Over time" timeline page, verified against
-live 10-batch data.
+New Day 5 complete: severity weighting added — deterministic rules (classification +
+₹1,000 amount threshold) computed and stored at classification time, no impact on
+existing is_reconciled/classification logic (re-verified unchanged across all 10
+batches). Exception queue UI shows color-coded severity badges (rust=high,
+amber=medium, forest=low, gray=info) with All/High/Medium/Low/Info filter toggle,
+default sorted high-first. Verified across batches 2, 3, and 4.
 
-Next: New Day 5 - severity weighting (Tier 2), then New Day 6 - explainability
-drill-down (Tier 3), then regression checkpoint at New Day 7 per the 15-day plan.
+Next: New Day 6 - Explainability drill-down (Tier 3). Cheap relative to other
+features since GET /batches/{id}/evidence already exists and does most of the work -
+this is primarily a frontend task (click a number, see the source rows).
 
 
 ## Operational notes (learned the hard way — don't relearn these)

@@ -257,6 +257,19 @@ def _get_batch_or_404(db: Session, batch_id: int) -> models.SettlementBatch:
     return batch
 
 
+def _get_exception_or_404(db: Session, batch_id: int, exception_id: int) -> models.ExceptionRecord:
+    exc = (
+        db.query(models.ExceptionRecord)
+        .filter(models.ExceptionRecord.id == exception_id, models.ExceptionRecord.batch_id == batch_id)
+        .first()
+    )
+    if exc is None:
+        raise HTTPException(
+            status_code=404, detail=f"ExceptionRecord {exception_id} not found on batch {batch_id}"
+        )
+    return exc
+
+
 # ---------- routes ----------
 
 @app.get("/health")
@@ -373,6 +386,18 @@ def get_batch_evidence(batch_id: int, db: Session = Depends(get_db)):
         order_ids |= e_order_ids
         bank_ids |= e_bank_ids
 
+    return _resolve_evidence(db, entry_ids, order_ids, bank_ids)
+
+
+@app.get("/batches/{batch_id}/exceptions/{exception_id}/evidence", response_model=EvidenceOut)
+def get_exception_evidence(batch_id: int, exception_id: int, db: Session = Depends(get_db)):
+    """Scoped to this ONE exception's own linked_evidence_ids only -- unlike
+    GET /batches/{batch_id}/evidence, which aggregates across every exception on
+    the batch. Same scoping principle already used by /explain."""
+    _get_batch_or_404(db, batch_id)
+    exc = _get_exception_or_404(db, batch_id, exception_id)
+
+    entry_ids, order_ids, bank_ids = _extract_evidence_ids(exc.linked_evidence_ids)
     return _resolve_evidence(db, entry_ids, order_ids, bank_ids)
 
 
@@ -511,15 +536,7 @@ def get_transparency(db: Session = Depends(get_db)):
 @app.get("/batches/{batch_id}/exceptions/{exception_id}/explain", response_model=ExplainResponse)
 def explain_exception(batch_id: int, exception_id: int, db: Session = Depends(get_db)):
     _get_batch_or_404(db, batch_id)
-    exc = (
-        db.query(models.ExceptionRecord)
-        .filter(models.ExceptionRecord.id == exception_id, models.ExceptionRecord.batch_id == batch_id)
-        .first()
-    )
-    if exc is None:
-        raise HTTPException(
-            status_code=404, detail=f"ExceptionRecord {exception_id} not found on batch {batch_id}"
-        )
+    exc = _get_exception_or_404(db, batch_id, exception_id)
 
     if exc.ai_explanation:
         return ExplainResponse(

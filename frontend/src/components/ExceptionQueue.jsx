@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import Amount from './Amount'
 import AiExplanation from './AiExplanation'
+import EvidencePanel from './EvidencePanel'
 import { formatClassification } from '../lib/format'
 
 const STATUS_STYLES = {
@@ -211,6 +212,11 @@ export default function ExceptionQueue({
                   )}
                 </div>
 
+                <EvidencePanel
+                  batchId={batchId}
+                  exceptionId={row.id}
+                  classification={row.classification}
+                />
                 <AiExplanation batchId={batchId} exceptionId={row.id} />
               </li>
             )
