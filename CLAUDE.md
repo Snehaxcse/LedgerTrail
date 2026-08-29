@@ -70,16 +70,17 @@ API calls.)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-New Day 5 complete: severity weighting added — deterministic rules (classification +
-₹1,000 amount threshold) computed and stored at classification time, no impact on
-existing is_reconciled/classification logic (re-verified unchanged across all 10
-batches). Exception queue UI shows color-coded severity badges (rust=high,
-amber=medium, forest=low, gray=info) with All/High/Medium/Low/Info filter toggle,
-default sorted high-first. Verified across batches 2, 3, and 4.
+New Day 6 complete: added GET /batches/{batch_id}/exceptions/{exception_id}/evidence
+(per-exception, correctly scoped — does NOT reuse the batch-wide /evidence endpoint,
+which mixes multiple exceptions' data together). Frontend drill-down ("View evidence")
+verified across all 4 exception types: Missing Refund Record and Fee Tier Mismatch
+(side-by-side settlement vs order record values), Duplicate Entry (repeated-row
+callout), and Timing Difference (bank-transaction-only, no order data — confirmed
+this edge case renders cleanly with no empty sections or crashes).
 
-Next: New Day 6 - Explainability drill-down (Tier 3). Cheap relative to other
-features since GET /batches/{id}/evidence already exists and does most of the work -
-this is primarily a frontend task (click a number, see the source rows).
+Next: New Day 7 - full regression checkpoint, per the 15-day plan. Re-verify
+everything built so far (Tier 0/1 core, AI explanation, NL query, trend view,
+severity, drill-down) still works together after 6 days of additions.
 
 
 ## Operational notes (learned the hard way — don't relearn these)
@@ -93,3 +94,19 @@ this is primarily a frontend task (click a number, see the source rows).
 3. AI explanation system prompt must explicitly forbid Markdown formatting
    (no #, **, or list markers) — plain prose only, since the frontend displays
    the text as-is with no Markdown rendering.
+
+## Operational note: demo staging is destroyed by every regen
+ApprovalLog is correctly wiped on every generate_synthetic_data.py/ingest.py run
+(necessary — it FK-references ExceptionRecord IDs, which are recreated each regen).
+This means: after ANY future regeneration, the demo staging (Missing Refund Record
+approved by "Sneha" as the "before" example) is gone and must be redone manually:
+POST /exceptions/1/approve {"approver": "Sneha", "decision": "approved"}.
+Check this explicitly before any rehearsal or demo, don't assume it's still staged.
+
+AuditEvent deletion bug (New Day 7): both scripts previously called
+db.query(models.AuditEvent).delete() during regen, violating the append-only
+guarantee. Fixed and verified with a canary-row survival test. Confirmed via grep
+(New Day 7 regression check) that no delete/update call touches AuditEvent anywhere
+in app/ or scripts/ as of now. This fix means the ONE real historical gap in the
+audit trail (an untraceable early approval, exact circumstances unknown) cannot
+recur — but that gap itself is real and permanent in the history, not hidden.
