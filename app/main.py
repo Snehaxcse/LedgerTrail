@@ -105,6 +105,7 @@ class ExceptionOut(BaseModel):
     suggested_action: Optional[str]
     status: str
     requires_approval: bool
+    severity: Optional[str]
     linked_evidence_ids: List[dict]
     approver: Optional[str] = None
     reason: Optional[str] = None
@@ -317,6 +318,7 @@ def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db)):
                 suggested_action=e.suggested_action,
                 status=e.status,
                 requires_approval=info.get("requires_approval", False),
+                severity=e.severity,
                 linked_evidence_ids=json.loads(e.linked_evidence_ids) if e.linked_evidence_ids else [],
                 approver=log.approver if log else None,
                 reason=log.reason if log else None,

@@ -22,6 +22,8 @@ def ensure_schema():
         col_names = {row[1] for row in cols}
         if cols and "ai_explanation" not in col_names:
             conn.execute(text("ALTER TABLE exceptions ADD COLUMN ai_explanation TEXT"))
+        if cols and "severity" not in col_names:
+            conn.execute(text("ALTER TABLE exceptions ADD COLUMN severity VARCHAR"))
 
 
 def get_db():

@@ -70,34 +70,18 @@ API calls.)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-Buildathon deadline extended: 15 days total from Aug 29, 2026 (previously 5).
-Tier 0 + Tier 1 fully complete and verified — the entire original 5-day scope,
-demo-ready. Demo data staged: Missing Refund Record (Batch 2) pre-approved as a
-"before" example; Fee Tier Mismatch (Batch 2) and Duplicate Entry (Batch 3) left
-open for live demo; Timing Difference (Batch 4) needs no action. App is staged,
-not a sandbox — no exploratory clicking without a deliberate reset
-(scripts/run_reconciliation.py) afterward.
+New Day 4 complete: dataset expanded from 4 to 10 settlement batches (Aug 20 - Nov 5
+2026). Batches 1-4 confirmed byte-identical to pre-expansion state (verified via
+snapshot diff, not assumed) — seed-ordering holds because new batches are appended
+after existing ones in generation order, not interleaved. Batches 5-10 are clean
+(no injected errors) by design, so the 4/4 detection rate and every previously
+verified number are unchanged. GET /trend endpoint (reuses _batch_summary, no
+duplicated reconciliation logic) + "Over time" timeline page, verified against
+live 10-batch data.
 
-AI Explanation Layer (New Day 1): app/ai_explain.py, ExceptionRecord.ai_explanation
-column, and GET /batches/{id}/exceptions/{id}/explain are built.
+Next: New Day 5 - severity weighting (Tier 2), then New Day 6 - explainability
+drill-down (Tier 3), then regression checkpoint at New Day 7 per the 15-day plan.
 
-PROVIDER HISTORY (so future-you isn't confused by old references): originally built
-against Anthropic, briefly switched to Google Gemini free tier, then REVERTED back
-to Anthropic (paid, $5 added) after Gemini's free-tier RPD (20/day) and a
-default "thinking" mode silently consuming the entire output token budget caused
-3 of 4 real exceptions to fail. Anthropic is correct and final as of this note —
-if you see any Gemini references elsewhere in this file or the code, they're stale
-and should be corrected to Anthropic.
-
-Known fix carried forward regardless of provider: max_output_tokens must be 500,
-not 300 — Missing Refund Record's prompt (2 rows x 5 fields) is structurally tight
-against 300 tokens. Also: always check finish_reason/stop_reason — a truncated
-response with zero numbers can pass the numeric-verification check by accident
-(no numbers to flag != trustworthy), so truncation must be caught explicitly.
-
-Next: verify the reverted Anthropic implementation against all 4 real exceptions,
-including Missing Refund Record (never successfully got a real AI explanation
-during the Gemini attempt due to quota exhaustion).
 
 ## Operational notes (learned the hard way — don't relearn these)
 1. Run uvicorn with --reload during development. Without it, a running server

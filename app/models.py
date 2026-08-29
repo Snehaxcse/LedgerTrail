@@ -77,6 +77,7 @@ class ExceptionRecord(Base):
     status = Column(String, nullable=False, default="open")  # "open" | "approved" | "rejected"
     linked_evidence_ids = Column(Text, nullable=True)  # JSON-encoded list of related record ids
     ai_explanation = Column(Text, nullable=True)  # cached validated AI explanation; never caches a fallback
+    severity = Column(String, nullable=True)  # "high" | "medium" | "low" | "info"; computed at classification time
 
     batch = relationship("SettlementBatch")
 

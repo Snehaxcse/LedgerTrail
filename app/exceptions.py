@@ -64,10 +64,32 @@ class ExceptionResult:
     suggested_action: Optional[str]
     unexplained_amount: float
     is_reconciled: bool  # True only when classification is None (no exception at all)
+    severity: Optional[str] = None  # "high" | "medium" | "low" | "info"
 
 
 def _round2(x):
     return round(x, 2)
+
+
+# Severity weighting: a pure, deterministic rule layer on top of classification.
+# Does not touch CLASSIFICATION_INFO, requires_approval, blocks_reconciliation, or
+# is_reconciled -- those are computed exactly as before. Never let an LLM generate
+# or alter this table.
+SEVERITY_AMOUNT_THRESHOLD = 1000.0
+
+_FIXED_SEVERITY = {
+    "UNMATCHED_BATCH": "high",
+    "UNEXPLAINED_VARIANCE": "high",
+    "DUPLICATE_ENTRY": "low",
+    "TIMING_DIFFERENCE": "info",
+}
+_AMOUNT_DEPENDENT_SEVERITY = {"MISSING_REFUND_RECORD", "FEE_TIER_MISMATCH"}
+
+
+def _compute_severity(classification: str, unexplained_amount: float) -> str:
+    if classification in _AMOUNT_DEPENDENT_SEVERITY:
+        return "high" if unexplained_amount >= SEVERITY_AMOUNT_THRESHOLD else "medium"
+    return _FIXED_SEVERITY[classification]
 
 
 def _entries_for_batch(db, batch_id):
@@ -252,6 +274,7 @@ def classify_exceptions(db: Session) -> List[ExceptionResult]:
             requires_approval = info["requires_approval"]
             blocks_reconciliation = info["blocks_reconciliation"]
             suggested_action = info["suggested_action"]
+            severity = _compute_severity(classification, unexplained_amount)
 
             exc = models.ExceptionRecord(
                 batch_id=batch.id,
@@ -260,6 +283,7 @@ def classify_exceptions(db: Session) -> List[ExceptionResult]:
                 suggested_action=suggested_action,
                 status="open",
                 linked_evidence_ids=json.dumps(evidence),
+                severity=severity,
             )
             db.add(exc)
             db.flush()
@@ -274,6 +298,7 @@ def classify_exceptions(db: Session) -> List[ExceptionResult]:
                     suggested_action=suggested_action,
                     unexplained_amount=unexplained_amount,
                     is_reconciled=False,
+                    severity=severity,
                 )
             )
 
