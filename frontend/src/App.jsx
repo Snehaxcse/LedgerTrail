@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import AuditTrail from './pages/AuditTrail'
 import BatchBridge from './pages/BatchBridge'
 import Dashboard from './pages/Dashboard'
+import Trend from './pages/Trend'
 import Transparency from './pages/Transparency'
 
 export default function App() {
@@ -12,6 +13,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/batches/:id" element={<BatchBridge />} />
+          <Route path="/trend" element={<Trend />} />
           <Route path="/audit" element={<AuditTrail />} />
           <Route path="/transparency" element={<Transparency />} />
         </Routes>

@@ -188,6 +188,14 @@ class QueryResponse(BaseModel):
     source: Literal["answered", "unverifiable", "out_of_scope"]
 
 
+class TrendEntry(BaseModel):
+    settlement_date: datetime.date
+    batch_id: int
+    is_reconciled: bool
+    variance: Optional[float]
+    total_net: float
+
+
 # ---------- helpers ----------
 
 def _match_for_batch(db: Session, batch_id: int) -> Optional[models.Match]:
@@ -571,3 +579,28 @@ def query(body: QueryRequest, db: Session = Depends(get_db)):
 
     result = answer_query(body.question, context_data)
     return QueryResponse(answer=result.text, source=result.source)
+
+
+@app.get("/trend", response_model=List[TrendEntry])
+def get_trend(db: Session = Depends(get_db)):
+    """One entry per batch, ordered by settlement_date, for charting reconciliation
+    rate and variance over time. Reuses _batch_summary rather than recomputing
+    is_reconciled/variance -- same logic /batches uses, not a second definition."""
+    batches = (
+        db.query(models.SettlementBatch)
+        .order_by(models.SettlementBatch.settlement_date, models.SettlementBatch.id)
+        .all()
+    )
+    entries = []
+    for batch in batches:
+        summary = _batch_summary(db, batch)
+        entries.append(
+            TrendEntry(
+                settlement_date=batch.settlement_date,
+                batch_id=batch.id,
+                is_reconciled=summary.is_reconciled,
+                variance=summary.variance,
+                total_net=batch.total_net,
+            )
+        )
+    return entries

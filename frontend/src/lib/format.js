@@ -20,6 +20,15 @@ export function formatDate(isoDate) {
   })
 }
 
+export function formatDateShort(isoDate) {
+  if (!isoDate) return '—'
+  const [year, month, day] = String(isoDate).split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+  })
+}
+
 export function formatScore(value) {
   if (value === null || value === undefined) return '—'
   return Number(value).toFixed(2)

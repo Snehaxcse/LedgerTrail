@@ -41,6 +41,16 @@ BATCH_CONFIGS = [
     {"batch_num": 2, "settlement_date": datetime.date(2026, 8, 23), "num_entries": 19, "timing_mismatch": False},
     {"batch_num": 3, "settlement_date": datetime.date(2026, 8, 26), "num_entries": 16, "timing_mismatch": False},
     {"batch_num": 4, "settlement_date": datetime.date(2026, 8, 27), "num_entries": 15, "timing_mismatch": True},
+    # Batches 5-10: appended after the original 4 so their random draws happen
+    # strictly later in the fixed-seed sequence -- batches 1-4's own data is
+    # untouched. All clean (no INJECTED_ROLES entry, timing_mismatch=False),
+    # spread across ~2.5 months so the reconciled dataset spans a longer range.
+    {"batch_num": 5, "settlement_date": datetime.date(2026, 9, 3), "num_entries": 18, "timing_mismatch": False},
+    {"batch_num": 6, "settlement_date": datetime.date(2026, 9, 10), "num_entries": 16, "timing_mismatch": False},
+    {"batch_num": 7, "settlement_date": datetime.date(2026, 9, 24), "num_entries": 19, "timing_mismatch": False},
+    {"batch_num": 8, "settlement_date": datetime.date(2026, 10, 8), "num_entries": 17, "timing_mismatch": False},
+    {"batch_num": 9, "settlement_date": datetime.date(2026, 10, 22), "num_entries": 15, "timing_mismatch": False},
+    {"batch_num": 10, "settlement_date": datetime.date(2026, 11, 5), "num_entries": 18, "timing_mismatch": False},
 ]
 
 # Exactly one occurrence of each injected error type, placed by (batch_num, index in batch).

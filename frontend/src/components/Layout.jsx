@@ -22,16 +22,19 @@ export default function Layout({ children }) {
   return (
     <div className="min-h-svh">
       <header className="sticky top-0 z-20 border-b border-rule/80 bg-paper-raised/90 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3.5">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3.5">
           <Link to="/" className="flex items-center gap-2.5 text-ink no-underline">
             <Mark />
             <span className="font-serif text-2xl leading-none tracking-tight">
               Ledger<i className="not-italic text-forest">Trail</i>
             </span>
           </Link>
-          <nav className="flex items-center gap-5">
+          <nav className="flex flex-wrap items-center gap-x-5 gap-y-1">
             <NavLink to="/" end className={navClass}>
               Batches
+            </NavLink>
+            <NavLink to="/trend" className={navClass}>
+              Over time
             </NavLink>
             <NavLink to="/transparency" className={navClass}>
               Transparency
