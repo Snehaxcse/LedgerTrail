@@ -50,7 +50,7 @@ export default function Transparency() {
       {loading ? <p className="mt-8 text-ink-muted">Loading transparency report…</p> : null}
       {error ? (
         <div className="mt-6 rounded-sm border border-rust/40 bg-rust-wash px-4 py-3 text-rust">
-          Could not load GET /transparency.
+          Could not load the accuracy report.
           <p className="mt-1 font-mono text-xs opacity-80">{error}</p>
         </div>
       ) : null}
@@ -66,7 +66,13 @@ export default function Transparency() {
           <p className="mt-3 text-lg text-ink">
             {summary.total_detected} / {summary.total_planted} injected errors detected
           </p>
-          <p className="mt-1 font-mono text-sm text-ink-muted">detection_rate {summary.detection_rate}</p>
+          {summary.total_detected === summary.total_planted ? (
+            <p className="mt-1 text-sm text-ink-muted">
+              Every planted error was caught and correctly classified.
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-ink-muted">Not every planted error was detected.</p>
+          )}
         </section>
       ) : null}
 

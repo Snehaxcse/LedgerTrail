@@ -62,13 +62,12 @@ Frontend: React + Tailwind (built separately in Cursor — API contract only)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-Day 4 complete and verified: full frontend built in Cursor against the frozen API —
-dashboard (reconciled/not-reconciled banners driven strictly by is_reconciled, never
-by variance alone), bridge view (Gross→Net breakdown, confidence score, matched/unmatched
-bank status), exception queue with approval flow (reject requires a reason, enforced
-server-side and shown in UI), and a full audit trail view (chronological, human-readable,
-every entry shows batch + classification context).
+Day 5, Transparency Panel complete: GET /transparency computes detection rate live
+from ground_truth.json vs actual ExceptionRecords (verified by deliberately deleting
+and injecting fake exceptions, confirming counts respond correctly, then restoring).
+Frontend panel shows 4/4 detected, 0 false positives, per-error expected/actual table.
+False-positive count is designed to visually escalate (rust callout) if it's ever > 0,
+rather than blending into the same "pass" styling.
 
-Next: Day 5 — Injected-Error Transparency Panel (Tier 2), formal accuracy write-up
-(precision/recall by error type), demo data reset to a clean deliberate state,
-full rehearsal of the 3 demo moments.
+Next: reset demo data to a clean deliberate state, formal accuracy write-up,
+full demo rehearsal.

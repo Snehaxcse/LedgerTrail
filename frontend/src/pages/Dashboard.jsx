@@ -38,8 +38,8 @@ export default function Dashboard() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brass">Batches</p>
           <h1 className="mt-1 font-serif text-4xl tracking-tight text-ink">Settlement dashboard</h1>
           <p className="mt-2 max-w-xl text-ink-muted">
-            Status is taken from <span className="font-medium text-ink">is_reconciled</span>. A matching
-            bank amount does not turn a batch green.
+            Status reflects whether every open exception is resolved — not just whether the bank amount
+            matches.
           </p>
         </div>
         {!loading && !error ? (
