@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getBatch, getBatchExceptions, reviewException } from '../api'
 import BankPanel from '../components/BankPanel'
 import BridgeStatement from '../components/BridgeStatement'
 import Amount from '../components/Amount'
 import ExceptionQueue from '../components/ExceptionQueue'
+import SimulatedNotice from '../components/SimulatedNotice'
 import StatusBanner from '../components/StatusBanner'
-import { formatDate } from '../lib/format'
+import { formatClassification, formatDate } from '../lib/format'
 
 const APPROVER_KEY = 'ledgertrail.approver'
 
@@ -20,12 +21,15 @@ export default function BatchBridge() {
   const [pendingId, setPendingId] = useState(null)
   const [approver, setApprover] = useState(() => sessionStorage.getItem(APPROVER_KEY) || '')
   const [reasons, setReasons] = useState({})
+  const [notice, setNotice] = useState(null)
+  const dismissNotice = useCallback(() => setNotice(null), [])
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     setReviewError(null)
+    setNotice(null)
     Promise.all([getBatch(id), getBatchExceptions(id)])
       .then(([batchData, exceptionData]) => {
         if (!cancelled) {
@@ -60,6 +64,7 @@ export default function BatchBridge() {
 
     setPendingId(exceptionId)
     setReviewError(null)
+    const reviewed = exceptions.find((row) => row.id === exceptionId)
     try {
       await reviewException(exceptionId, {
         approver: name,
@@ -72,6 +77,11 @@ export default function BatchBridge() {
       ])
       setBatch(nextBatch)
       setExceptions(nextExceptions)
+      setNotice({
+        token: `${exceptionId}-${decision}-${Date.now()}`,
+        kind: decision,
+        classification: formatClassification(reviewed?.classification) || 'this exception',
+      })
     } catch (err) {
       setReviewError(err.message)
     } finally {
@@ -173,6 +183,8 @@ export default function BatchBridge() {
           ) : null}
         </article>
       ) : null}
+
+      <SimulatedNotice notice={notice} onDismiss={dismissNotice} />
     </div>
   )
 }

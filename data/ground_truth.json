@@ -30,5 +30,21 @@
     "expected_value": "2026-08-27",
     "actual_value": "2026-08-29",
     "description": "Batch 4: settlement_date is 2026-08-27 but the matching bank credit is dated 2026-08-29 (2 days later)."
+  },
+  {
+    "type": "missing_refund",
+    "order_ref": "OD-05-0001",
+    "batch_id": 5,
+    "expected_value": 4003.74,
+    "actual_value": 0.0,
+    "description": "OD-05-0001: settlement deducted a Rs.4003.74 refund, but the order record shows no refund at all (refund_amount=0)."
+  },
+  {
+    "type": "duplicate_entry",
+    "order_ref": "OD-06-0001",
+    "batch_id": 6,
+    "expected_value": "1 settlement entry",
+    "actual_value": "2 settlement entries (identical)",
+    "description": "OD-06-0001: appears twice in the settlement batch with identical amounts, but the bank credit only reflects it once."
   }
 ]

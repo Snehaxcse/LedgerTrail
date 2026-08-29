@@ -54,13 +54,36 @@ BATCH_CONFIGS = [
 ]
 
 # Exactly one occurrence of each injected error type, placed by (batch_num, index in batch).
-# Each batch carries exactly one error type (batch 1 is left completely clean on
-# purpose) so a single-classification-per-batch reconciliation engine can still be
-# exercised against every error type in isolation.
+# Each batch carries exactly one error type per role (batch 1, and batches 7-10,
+# are left completely clean on purpose) so a single-classification-per-batch
+# reconciliation engine can still be exercised against every error type in isolation.
+#
+# (5, 0) and (6, 0) were added after batches 1-10 already existed. Index 0 was
+# deliberately chosen in each case to keep the fixed-seed sequence byte-identical
+# for every other batch:
+#   - (5, 0): the missing_refund branch and the natural no-refund branch both
+#     consume exactly one random() call (random.uniform() and random.random()
+#     are each a single call under the hood), so swapping an order's role from
+#     "natural, no refund" to "missing_refund" costs zero net draws -- PROVIDED
+#     that order had no natural refund to begin with. OD-05-0001 happened to
+#     have none. This was confirmed the only way that actually matters: running
+#     the full regeneration with this change applied and diffing every other
+#     batch's output against a pre-change snapshot, byte for byte -- not by
+#     reasoning about draw counts in isolation (an earlier, simplified dry run
+#     used to pick this index skipped the make_bank_reference() call each batch
+#     also makes, which shifts the real stream position; it arrived at the
+#     right index anyway, but only the full-file diff is the actual proof).
+#     If this index is ever changed, re-verify the same way: full regen, diff
+#     every batch that should be untouched.
+#   - (6, 0): duplicate_entry is applied entirely in build_dataset() after
+#     build_batch_orders() has already returned; it never touches random(), so
+#     any index is safe here regardless of natural refund outcome.
 INJECTED_ROLES = {
     (2, 0): "missing_refund",
     (2, 1): "wrong_fee_tier",
     (3, 0): "duplicate_entry",
+    (5, 0): "missing_refund",
+    (6, 0): "duplicate_entry",
 }
 
 
