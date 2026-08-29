@@ -110,6 +110,7 @@ export default function BatchBridge() {
           <StatusBanner batch={batch} size="full" />
 
           <ExceptionQueue
+            batchId={batch.id}
             exceptions={exceptions}
             approver={approver}
             onApproverChange={handleApproverChange}

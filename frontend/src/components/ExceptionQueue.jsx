@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import Amount from './Amount'
+import AiExplanation from './AiExplanation'
 import { formatClassification } from '../lib/format'
 
 const STATUS_STYLES = {
@@ -9,6 +10,7 @@ const STATUS_STYLES = {
 }
 
 export default function ExceptionQueue({
+  batchId,
   exceptions,
   approver,
   onApproverChange,
@@ -148,6 +150,8 @@ export default function ExceptionQueue({
                     </div>
                   )}
                 </div>
+
+                <AiExplanation batchId={batchId} exceptionId={row.id} />
               </li>
             )
           })}

@@ -19,6 +19,10 @@ export function getBatchExceptions(id) {
   return api(`/batches/${id}/exceptions`)
 }
 
+export function getExceptionExplanation(batchId, exceptionId) {
+  return api(`/batches/${batchId}/exceptions/${exceptionId}/explain`)
+}
+
 export function reviewException(id, { approver, decision, reason }) {
   const body = { approver, decision }
   if (reason != null && reason !== '') {

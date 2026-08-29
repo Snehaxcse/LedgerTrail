@@ -36,7 +36,11 @@ SYSTEM_PROMPT = (
     "deterministic code. You must NEVER calculate, estimate, round, or introduce any "
     "number that is not explicitly given to you in the data below. Only restate and "
     "explain the given facts in plain language for a non-technical reader. If you are "
-    "unsure of a number, omit it rather than guess."
+    "unsure of a number, omit it rather than guess. "
+    "Write your response as plain prose sentences only. Do not use Markdown "
+    "formatting -- no headers (#), no bold (**), no bullet points or numbered lists "
+    "with special characters. If listing steps, write them as a plain sentence like "
+    "'First do X, then do Y.'"
 )
 
 # Matches "Rs.5,786.83", "₹5,786.83", "5786.83", "23", etc. Deliberately loose --
