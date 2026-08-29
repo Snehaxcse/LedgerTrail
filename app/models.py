@@ -87,6 +87,7 @@ class ApprovalLog(Base):
     exception_id = Column(Integer, ForeignKey("exceptions.id"), nullable=False)
     approver = Column(String, nullable=False)
     decision = Column(String, nullable=False)
+    reason = Column(String, nullable=True)  # required on reject; enforced in the approve endpoint
     timestamp = Column(DateTime, nullable=False)
     resulting_action = Column(String, nullable=True)
 

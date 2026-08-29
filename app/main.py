@@ -14,10 +14,11 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app import bridge, models
-from app.database import get_db
+from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
 
 app = FastAPI(title="LedgerTrail")
+ensure_schema()
 
 VARIANCE_TOLERANCE = bridge.VARIANCE_TOLERANCE
 
@@ -82,6 +83,8 @@ class ExceptionOut(BaseModel):
     status: str
     requires_approval: bool
     linked_evidence_ids: List[dict]
+    approver: Optional[str] = None
+    reason: Optional[str] = None
 
 
 class EvidenceOut(BaseModel):
@@ -93,12 +96,14 @@ class EvidenceOut(BaseModel):
 class ApprovalRequest(BaseModel):
     approver: str
     decision: Literal["approved", "rejected"]
+    reason: Optional[str] = None
 
 
 class ApprovalResponse(BaseModel):
     exception_id: int
     status: str
     approval_log_id: int
+    reason: Optional[str] = None
 
 
 class AuditEventOut(BaseModel):
@@ -213,9 +218,23 @@ def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db)):
         .order_by(models.ExceptionRecord.id)
         .all()
     )
+
+    latest_log_by_exception = {}
+    if rows:
+        logs = (
+            db.query(models.ApprovalLog)
+            .filter(models.ApprovalLog.exception_id.in_([e.id for e in rows]))
+            .order_by(models.ApprovalLog.id.desc())
+            .all()
+        )
+        for log in logs:
+            if log.exception_id not in latest_log_by_exception:
+                latest_log_by_exception[log.exception_id] = log
+
     out = []
     for e in rows:
         info = CLASSIFICATION_INFO.get(e.classification, {})
+        log = latest_log_by_exception.get(e.id)
         out.append(
             ExceptionOut(
                 id=e.id,
@@ -226,6 +245,8 @@ def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db)):
                 status=e.status,
                 requires_approval=info.get("requires_approval", False),
                 linked_evidence_ids=json.loads(e.linked_evidence_ids) if e.linked_evidence_ids else [],
+                approver=log.approver if log else None,
+                reason=log.reason if log else None,
             )
         )
     return out
@@ -273,6 +294,10 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
     if exc is None:
         raise HTTPException(status_code=404, detail=f"ExceptionRecord {exception_id} not found")
 
+    reason = body.reason.strip() if body.reason else None
+    if body.decision == "rejected" and not reason:
+        raise HTTPException(status_code=400, detail="reason is required when decision is 'rejected'")
+
     before_status = exc.status
     exc.status = body.decision
 
@@ -281,6 +306,7 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
         exception_id=exc.id,
         approver=body.approver,
         decision=body.decision,
+        reason=reason,
         timestamp=datetime.datetime.now(),
         resulting_action=resulting_action,
     )
@@ -295,14 +321,25 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
             action="exception_reviewed",
             before_state=json.dumps({"exception_id": exc.id, "status": before_status}),
             after_state=json.dumps(
-                {"exception_id": exc.id, "status": exc.status, "approver": body.approver, "decision": body.decision}
+                {
+                    "exception_id": exc.id,
+                    "status": exc.status,
+                    "approver": body.approver,
+                    "decision": body.decision,
+                    "reason": reason,
+                }
             ),
         )
     )
 
     db.commit()
 
-    return ApprovalResponse(exception_id=exc.id, status=exc.status, approval_log_id=approval_log.id)
+    return ApprovalResponse(
+        exception_id=exc.id,
+        status=exc.status,
+        approval_log_id=approval_log.id,
+        reason=reason,
+    )
 
 
 @app.get("/audit-trail", response_model=AuditTrailResponse)

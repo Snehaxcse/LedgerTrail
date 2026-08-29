@@ -49,6 +49,7 @@ Frontend: React + Tailwind (built separately in Cursor — API contract only)
 - id (PK)
 - exception_id (FK → exceptions.id)
 - approver, decision, timestamp, resulting_action (nullable)
+- reason (String, nullable) — required when decision="rejected"; the approve endpoint returns 400 if it is missing or empty
 
 **AuditEvent**
 - id (PK)
