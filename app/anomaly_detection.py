@@ -249,11 +249,19 @@ def run_anomaly_detection(db: Session) -> List[AnomalyResult]:
 
     for result in results:
         info = CLASSIFICATION_INFO[result.classification]
-        entry_ids = [
-            e.id
-            for e in db.query(models.SettlementEntry).filter(models.SettlementEntry.batch_id == result.batch_id).all()
-        ]
-        evidence = [{"type": "settlement_entry", "id": eid} for eid in entry_ids]
+        # This finding isn't about any single row -- it's an aggregate statistical
+        # comparison, so the evidence IS that comparison (not a list of settlement
+        # entries, unlike every other classification). GET /batches/{id}/exceptions/
+        # {id}/evidence special-cases this shape; see app/main.py.
+        evidence = {
+            "metric": result.dimension,
+            "batch_value": result.observed_rate,
+            "baseline_mean": result.baseline_mean,
+            "baseline_stdev": result.baseline_stdev,
+            "deviation_stdevs": result.deviation_in_stdevs,
+            "relative_deviation_pct": round(result.relative_deviation * 100, 2),
+            "baseline_batches": result.baseline_batch_ids,
+        }
 
         exc = models.ExceptionRecord(
             batch_id=result.batch_id,

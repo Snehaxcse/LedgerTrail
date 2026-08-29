@@ -42,6 +42,23 @@ export function formatPercent(value) {
   }).format(Number(value))
 }
 
+export function formatRatePercent(value) {
+  if (value === null || value === undefined) return '—'
+  return new Intl.NumberFormat('en-IN', {
+    style: 'percent',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value))
+}
+
+export function formatPercentPoints(value) {
+  if (value === null || value === undefined) return '—'
+  return `${Number(value).toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}%`
+}
+
 export function formatDateTime(iso) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('en-IN', {

@@ -1,7 +1,20 @@
 import { useState } from 'react'
 import { getExceptionEvidence } from '../api'
 import Amount from './Amount'
-import { formatDate, formatInr } from '../lib/format'
+import { formatDate, formatInr, formatPercentPoints, formatRatePercent } from '../lib/format'
+
+const ANOMALY_CLASSIFICATIONS = new Set(['SYSTEMIC_FEE_DRIFT', 'SYSTEMIC_REFUND_DRIFT'])
+
+function metricLabel(metric) {
+  if (metric === 'fee_rate') return 'fee rate'
+  if (metric === 'refund_rate') return 'refund rate'
+  return String(metric || 'rate').replaceAll('_', ' ')
+}
+
+function formatBatchIds(ids) {
+  if (!ids?.length) return 'earlier batches'
+  return ids.map((id) => String(id).padStart(2, '0')).join(', ')
+}
 
 function amountsDiffer(left, right) {
   return formatInr(left) !== formatInr(right)
@@ -74,6 +87,10 @@ export default function EvidencePanel({ batchId, exceptionId, classification }) 
 }
 
 function EvidenceBody({ classification, data }) {
+  if (ANOMALY_CLASSIFICATIONS.has(classification) || isAnomalyPayload(data)) {
+    return <AnomalyComparison data={data} />
+  }
+
   const entries = data.settlement_entries ?? []
   const orders = data.order_records ?? []
   const banks = data.bank_transactions ?? []
@@ -209,6 +226,53 @@ function EvidenceBody({ classification, data }) {
           </ul>
         </section>
       ) : null}
+    </div>
+  )
+}
+
+function isAnomalyPayload(data) {
+  return data != null && typeof data.metric === 'string' && 'batch_value' in data && !('settlement_entries' in data)
+}
+
+function AnomalyComparison({ data }) {
+  if (data?.metric == null || data.batch_value == null || data.baseline_mean == null) {
+    return <p className="mt-2 text-sm text-ink-muted">No comparison available for this exception.</p>
+  }
+
+  const metric = metricLabel(data.metric)
+  const batchRate = formatRatePercent(data.batch_value)
+  const baselineRate = formatRatePercent(data.baseline_mean)
+  const fromBatches = formatBatchIds(data.baseline_batches)
+  const higher = Number(data.batch_value) > Number(data.baseline_mean)
+  const direction = higher ? 'higher' : 'lower'
+  const relative = formatPercentPoints(data.relative_deviation_pct)
+  const stdevs = Number(data.deviation_stdevs).toLocaleString('en-IN', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 2,
+  })
+
+  return (
+    <div className="mt-3 space-y-4">
+      <dl className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-sm border border-rust/40 bg-rust-wash px-4 py-3">
+          <dt className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
+            This batch’s {metric}
+          </dt>
+          <dd className="mt-1 font-serif text-3xl tracking-tight text-rust">{batchRate}</dd>
+        </div>
+        <div className="rounded-sm border border-rule bg-paper px-4 py-3">
+          <dt className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
+            Historical baseline
+          </dt>
+          <dd className="mt-1 font-serif text-3xl tracking-tight text-ink">{baselineRate}</dd>
+          <p className="mt-1 text-xs text-ink-muted">from batches {fromBatches}</p>
+        </div>
+      </dl>
+      <div className="rounded-sm border border-rust/40 bg-rust-wash px-4 py-3 text-rust">
+        <p className="text-sm leading-snug text-ink">
+          {relative} {direction} than normal — {stdevs} standard deviations from baseline
+        </p>
+      </div>
     </div>
   )
 }

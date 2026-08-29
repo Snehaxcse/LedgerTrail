@@ -70,17 +70,31 @@ API calls.)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-New Day 6 complete: added GET /batches/{batch_id}/exceptions/{exception_id}/evidence
-(per-exception, correctly scoped — does NOT reuse the batch-wide /evidence endpoint,
-which mixes multiple exceptions' data together). Frontend drill-down ("View evidence")
-verified across all 4 exception types: Missing Refund Record and Fee Tier Mismatch
-(side-by-side settlement vs order record values), Duplicate Entry (repeated-row
-callout), and Timing Difference (bank-transaction-only, no order data — confirmed
-this edge case renders cleanly with no empty sections or crashes).
+New Days 9-11 complete: Cross-Settlement Anomaly Detection built (app/anomaly_detection.py).
+Planted a real, verified scenario: batch 9's fee rate systemically drifted +20% across
+every order (each order's OrderRecord.fee_amount matches the drifted value, so no
+single-batch/per-order check catches it — bridge and match are both clean). Detection
+works by comparing each batch's fee_rate/refund_rate against a statistical baseline
+built from genuinely clean batches, using iterative self-consistency filtering to
+exclude outliers from the baseline itself (converges to batches {1,7,8,10}).
 
-Next: New Day 7 - full regression checkpoint, per the 15-day plan. Re-verify
-everything built so far (Tier 0/1 core, AI explanation, NL query, trend view,
-severity, drill-down) still works together after 6 days of additions.
+IMPORTANT LIMITATION, disclosed not hidden: refund_rate anomaly detection is
+DISABLED. Natural refund_rate variance across clean batches (22%-54% relative
+deviation) is too high, with too small a baseline sample (4 batches), to reliably
+tell real drift from noise -- and no planted ground-truth refund-drift case exists
+to verify against, unlike fee_rate's verified 20% case. Shipping only what's
+verified rather than an unverified guess. Revisit if baseline sample grows or a
+real test case gets planted.
+
+Detection rule requires BOTH >2 standard deviations AND >10% relative deviation
+from baseline -- the stdev-only version produced false positives (batches 2/3
+flagged on fee_rate at ~0.6% relative deviation, purely because the clean baseline
+has near-zero natural variance, making any small absolute difference look
+statistically "significant"). The relative-deviation floor filters out this class
+of false positive while still catching real drift.
+
+Next: New Day 12 - hardening pass (edge cases, error handling audit, AI layer
+robustness). Then Day 13 accuracy write-up + deployment, Days 14-15 rehearsal.
 
 
 ## Operational notes (learned the hard way — don't relearn these)

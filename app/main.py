@@ -9,7 +9,7 @@ import datetime
 import json
 import logging
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Literal, Optional, Union
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app import bridge, models
 from app.ai_explain import generate_explanation
+from app.anomaly_detection import ANOMALY_CLASSIFICATIONS
 from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
 from app.nl_query import answer_query
@@ -115,6 +116,20 @@ class EvidenceOut(BaseModel):
     settlement_entries: List[SettlementEntryOut]
     order_records: List[OrderRecordOut]
     bank_transactions: List[BankTransactionOut]
+
+
+# Evidence shape for SYSTEMIC_FEE_DRIFT / SYSTEMIC_REFUND_DRIFT: these classifications
+# are an aggregate statistical comparison, not any single row, so their evidence is
+# the comparison itself rather than resolved SettlementEntry/OrderRecord/BankTransaction
+# rows. See app.anomaly_detection.run_anomaly_detection, which is what writes this shape.
+class AnomalyEvidenceOut(BaseModel):
+    metric: str  # "fee_rate" | "refund_rate"
+    batch_value: float
+    baseline_mean: float
+    baseline_stdev: float
+    deviation_stdevs: float
+    relative_deviation_pct: float
+    baseline_batches: List[int]
 
 
 class ApprovalRequest(BaseModel):
@@ -332,7 +347,7 @@ def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db)):
                 status=e.status,
                 requires_approval=info.get("requires_approval", False),
                 severity=e.severity,
-                linked_evidence_ids=json.loads(e.linked_evidence_ids) if e.linked_evidence_ids else [],
+                linked_evidence_ids=_list_evidence_ids(e.linked_evidence_ids),
                 approver=log.approver if log else None,
                 reason=log.reason if log else None,
             )
@@ -340,10 +355,27 @@ def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db)):
     return out
 
 
+def _list_evidence_ids(linked_evidence_ids_json: Optional[str]) -> list:
+    """ExceptionOut.linked_evidence_ids is a list of {type, id} refs. Anomaly
+    findings store a comparison dict instead -- return [] so the queue can
+    still serialize. The comparison is read from the per-exception evidence
+    endpoint, not from this list field."""
+    if not linked_evidence_ids_json:
+        return []
+    parsed = json.loads(linked_evidence_ids_json)
+    return parsed if isinstance(parsed, list) else []
+
+
 def _extract_evidence_ids(linked_evidence_ids_json: Optional[str]):
-    """Parses one ExceptionRecord's linked_evidence_ids JSON into typed id sets."""
+    """Parses one ExceptionRecord's linked_evidence_ids JSON into typed id sets.
+    SYSTEMIC_FEE_DRIFT/SYSTEMIC_REFUND_DRIFT store a comparison dict here instead
+    of a list of {type, id} entries (see AnomalyEvidenceOut) -- not a list, so
+    there's nothing to resolve into rows; skip rather than crash on it."""
     entry_ids, order_ids, bank_ids = set(), set(), set()
-    for item in (json.loads(linked_evidence_ids_json) if linked_evidence_ids_json else []):
+    parsed = json.loads(linked_evidence_ids_json) if linked_evidence_ids_json else []
+    if not isinstance(parsed, list):
+        return entry_ids, order_ids, bank_ids
+    for item in parsed:
         if item["type"] == "settlement_entry":
             entry_ids.add(item["id"])
         elif item["type"] == "order_record":
@@ -389,13 +421,26 @@ def get_batch_evidence(batch_id: int, db: Session = Depends(get_db)):
     return _resolve_evidence(db, entry_ids, order_ids, bank_ids)
 
 
-@app.get("/batches/{batch_id}/exceptions/{exception_id}/evidence", response_model=EvidenceOut)
+@app.get(
+    "/batches/{batch_id}/exceptions/{exception_id}/evidence",
+    response_model=Union[AnomalyEvidenceOut, EvidenceOut],
+)
 def get_exception_evidence(batch_id: int, exception_id: int, db: Session = Depends(get_db)):
     """Scoped to this ONE exception's own linked_evidence_ids only -- unlike
     GET /batches/{batch_id}/evidence, which aggregates across every exception on
-    the batch. Same scoping principle already used by /explain."""
+    the batch. Same scoping principle already used by /explain.
+
+    SYSTEMIC_FEE_DRIFT/SYSTEMIC_REFUND_DRIFT are a special case: the finding is
+    an aggregate statistical comparison, not any single row, so returning the
+    batch's raw SettlementEntry rows here would misrepresent what was actually
+    detected. linked_evidence_ids already holds that comparison as a dict (see
+    app.anomaly_detection.run_anomaly_detection) -- return it directly instead
+    of resolving it as {type, id} references."""
     _get_batch_or_404(db, batch_id)
     exc = _get_exception_or_404(db, batch_id, exception_id)
+
+    if exc.classification in ANOMALY_CLASSIFICATIONS:
+        return AnomalyEvidenceOut(**json.loads(exc.linked_evidence_ids))
 
     entry_ids, order_ids, bank_ids = _extract_evidence_ids(exc.linked_evidence_ids)
     return _resolve_evidence(db, entry_ids, order_ids, bank_ids)
