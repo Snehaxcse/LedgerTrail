@@ -365,13 +365,20 @@ def build_dataset():
                 }
             )
 
+        # Real Razorpay settlement narrations don't carry a batch/settlement ID --
+        # every payout from the same merchant account shows the same fixed bank/
+        # gateway text, varying only by UTR. Reusing bank_reference here (not a
+        # second make_bank_reference() call) keeps the UTR in the narration
+        # identical to the UTR in the reference column, as a real statement line
+        # would be, and consumes no additional random draws.
+        bank_reference = make_bank_reference()
         bank_rows.append(
             {
                 "batch_num": batch_num,
                 "date": bank_date,
                 "amount": batch_total_net,
-                "reference": make_bank_reference(),
-                "description": f"NEFT CR-RAZORPAY SETTLEMENT-BATCH{batch_num}",
+                "reference": bank_reference,
+                "description": f"NEFT CR: HDFC BANK {bank_reference} RAZORPAY SETTLEMENT",
             }
         )
 
@@ -386,6 +393,42 @@ def build_dataset():
                 "total_net": batch_total_net,
             }
         )
+
+    # Noise: realistic-looking bank transactions that are NOT Razorpay settlement
+    # credits and are not linked to any SettlementBatch. Fixed/hardcoded, not drawn
+    # from random() -- added after the per-batch loop above so they cannot shift
+    # that loop's random-stream position, and their amounts (a few thousand rupees)
+    # are far outside matching.AMOUNT_TOLERANCE of every batch's total_net (all
+    # >Rs.90,000), so the deterministic matcher leaves them unmatched by construction,
+    # not by luck. batch_num=None: these were never part of any batch, so there's
+    # nothing for write_to_db's bank_txn_by_batch dict to ever look them up by.
+    bank_rows.append(
+        {
+            "batch_num": None,
+            "date": datetime.date(2026, 9, 5),
+            "amount": 4250.00,
+            "reference": "NEFTN52847193028",
+            "description": "NEFT DR: VENDOR PAYMENT - OFFICE SUPPLIES",
+        }
+    )
+    bank_rows.append(
+        {
+            "batch_num": None,
+            "date": datetime.date(2026, 9, 18),
+            "amount": 1200.00,
+            "reference": "UPI488273649102",
+            "description": "UPI CR: CUSTOMER REFUND REVERSAL",
+        }
+    )
+    bank_rows.append(
+        {
+            "batch_num": None,
+            "date": datetime.date(2026, 10, 12),
+            "amount": 850.00,
+            "reference": "NEFTN71923847561",
+            "description": "NEFT DR: BANK CHARGES - ANNUAL MAINTENANCE",
+        }
+    )
 
     return batches, settlement_rows, order_rows, bank_rows, ground_truth
 
