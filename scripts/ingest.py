@@ -13,6 +13,7 @@ bank credit belongs to which batch is matching logic and comes later.
 import csv
 import datetime
 import sys
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -28,9 +29,25 @@ SETTLEMENT_REQUIRED = ["batch_id", "settlement_date", "order_ref", "gross_amount
 BANK_REQUIRED = ["date", "amount", "reference"]
 ORDER_REQUIRED = ["order_ref", "amount", "status", "fee_amount"]
 
+PAISE_PER_RUPEE = 100
 
-def parse_float(value):
-    return float(value)
+
+def parse_rupees_to_paise(value):
+    """Converts a decimal-rupee CSV string into integer paise. Every currency field
+    ingest.py parses is a rupee amount destined for a now-Integer (paise) column --
+    see float-to-paise migration Phase 1 in app/models.py. Uses decimal.Decimal for
+    both the parse and the *100 multiplication, not float, so the migration doesn't
+    reintroduce the exact binary-float imprecision it exists to eliminate (e.g.
+    float(116294.35) * 100 is not exactly 11629435 in IEEE 754; Decimal("116294.35")
+    * 100 is exactly Decimal("11629435.00")). ROUND_HALF_UP (not Python's
+    round-half-to-even default) for the conventional "round half up" behavior
+    expected of money."""
+    try:
+        decimal_value = Decimal(value)
+    except InvalidOperation:
+        raise ValueError(f"invalid decimal value: {value!r}")
+    paise = (decimal_value * PAISE_PER_RUPEE).to_integral_value(rounding=ROUND_HALF_UP)
+    return int(paise)
 
 
 def parse_date(value):
@@ -61,11 +78,11 @@ def ingest_batches(path):
                 {
                     "batch_id": int(row["batch_id"]),
                     "settlement_date": parse_date(row["settlement_date"]),
-                    "total_gross": parse_float(row["total_gross"]),
-                    "total_refunds": parse_float(row["total_refunds"]),
-                    "total_fees": parse_float(row["total_fees"]),
-                    "total_tax": parse_float(row["total_tax"]),
-                    "total_net": parse_float(row["total_net"]),
+                    "total_gross": parse_rupees_to_paise(row["total_gross"]),
+                    "total_refunds": parse_rupees_to_paise(row["total_refunds"]),
+                    "total_fees": parse_rupees_to_paise(row["total_fees"]),
+                    "total_tax": parse_rupees_to_paise(row["total_tax"]),
+                    "total_net": parse_rupees_to_paise(row["total_net"]),
                 }
             )
         except ValueError as e:
@@ -90,11 +107,11 @@ def ingest_settlement(path):
                     "batch_id": int(row["batch_id"]),
                     "settlement_date": parse_date(row["settlement_date"]),
                     "order_ref": row["order_ref"].strip(),
-                    "gross_amount": parse_float(row["gross_amount"]),
-                    "fee": parse_float(row["fee"]),
-                    "tax": parse_float(row["tax"]),
-                    "refund": parse_float(row["refund"]),
-                    "net_amount": parse_float(row["net_amount"]),
+                    "gross_amount": parse_rupees_to_paise(row["gross_amount"]),
+                    "fee": parse_rupees_to_paise(row["fee"]),
+                    "tax": parse_rupees_to_paise(row["tax"]),
+                    "refund": parse_rupees_to_paise(row["refund"]),
+                    "net_amount": parse_rupees_to_paise(row["net_amount"]),
                 }
             )
         except ValueError as e:
@@ -116,7 +133,7 @@ def ingest_bank(path):
             valid_rows.append(
                 {
                     "date": parse_date(row["date"]),
-                    "amount": parse_float(row["amount"]),
+                    "amount": parse_rupees_to_paise(row["amount"]),
                     "reference": row["reference"].strip(),
                     "description": (row.get("description") or "").strip() or None,
                 }
@@ -141,10 +158,10 @@ def ingest_orders(path):
             valid_rows.append(
                 {
                     "order_ref": row["order_ref"].strip(),
-                    "amount": parse_float(row["amount"]),
+                    "amount": parse_rupees_to_paise(row["amount"]),
                     "status": row["status"].strip(),
-                    "refund_amount": parse_float(refund_raw) if refund_raw != "" else None,
-                    "fee_amount": parse_float(row["fee_amount"]),
+                    "refund_amount": parse_rupees_to_paise(refund_raw) if refund_raw != "" else None,
+                    "fee_amount": parse_rupees_to_paise(row["fee_amount"]),
                 }
             )
         except ValueError as e:

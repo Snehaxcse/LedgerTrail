@@ -1,10 +1,18 @@
 """
 Generates synthetic Razorpay-style settlement reconciliation data for LedgerTrail (Day 1).
 
-Writes rows into the SQLite database via the SQLAlchemy models, exports the same
-source data as three raw CSVs (data/razorpay_settlement.csv, data/bank_statement.csv,
-data/order_records.csv), and writes data/ground_truth.json documenting every
-error deliberately injected into the dataset.
+Produces four raw CSVs (data/settlement_batches.csv, data/razorpay_settlement.csv,
+data/bank_statement.csv, data/order_records.csv) and data/ground_truth.json
+documenting every error deliberately injected into the dataset. This script has
+no database side-effect of its own -- scripts/ingest.py is the sole path that
+populates the database, reading these exact CSVs (see float-to-paise migration
+Phase 1 follow-up: this script used to also write rupee floats directly to the
+DB via its own write_to_db(), a second code path that duplicated what ingest.py
+already did and was always immediately wiped and overwritten by it in the real
+pipeline -- app/startup.py's generate-then-ingest sequence never read the DB in
+between the two calls. Removed rather than converted to paise, since keeping
+two independent DB-writing paths in sync was the actual risk, not which unit
+either of them used.)
 
 No matching, bridge, or exception logic lives here -- this script only produces
 raw source data and the answer key for it. All math here is plain deterministic
@@ -14,13 +22,7 @@ import csv
 import datetime
 import json
 import random
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from app.database import Base, engine, SessionLocal
-from app import models
 
 random.seed(42)
 
@@ -400,8 +402,8 @@ def build_dataset():
     # that loop's random-stream position, and their amounts (a few thousand rupees)
     # are far outside matching.AMOUNT_TOLERANCE of every batch's total_net (all
     # >Rs.90,000), so the deterministic matcher leaves them unmatched by construction,
-    # not by luck. batch_num=None: these were never part of any batch, so there's
-    # nothing for write_to_db's bank_txn_by_batch dict to ever look them up by.
+    # not by luck. batch_num=None: these were never part of any batch -- the field
+    # itself is otherwise unused by anything downstream of this script.
     bank_rows.append(
         {
             "batch_num": None,
@@ -431,87 +433,6 @@ def build_dataset():
     )
 
     return batches, settlement_rows, order_rows, bank_rows, ground_truth
-
-
-def write_to_db(batches, settlement_rows, order_rows, bank_rows):
-    Base.metadata.create_all(engine)
-
-    db = SessionLocal()
-    try:
-        # Wipe existing data so the script is safely re-runnable. AuditEvent is
-        # deliberately excluded: it is an append-only audit log and must never be
-        # updated or deleted, even when the rest of the dataset is regenerated.
-        db.query(models.ApprovalLog).delete()
-        db.query(models.ExceptionRecord).delete()
-        db.query(models.Match).delete()
-        db.query(models.OrderRecord).delete()
-        db.query(models.SettlementEntry).delete()
-        db.query(models.SettlementBatch).delete()
-        db.query(models.BankTransaction).delete()
-        db.commit()
-
-        bank_txn_by_batch = {}
-        for row in bank_rows:
-            txn = models.BankTransaction(
-                amount=row["amount"],
-                date=row["date"],
-                reference=row["reference"],
-                description=row["description"],
-            )
-            db.add(txn)
-            db.flush()
-            bank_txn_by_batch[row["batch_num"]] = txn.id
-
-        batch_id_by_num = {}
-        for batch in batches:
-            b = models.SettlementBatch(
-                settlement_date=batch["settlement_date"],
-                total_gross=batch["total_gross"],
-                total_refunds=batch["total_refunds"],
-                total_fees=batch["total_fees"],
-                total_tax=batch["total_tax"],
-                total_net=batch["total_net"],
-                bank_transaction_id=bank_txn_by_batch[batch["batch_num"]],
-            )
-            db.add(b)
-            db.flush()
-            batch_id_by_num[batch["batch_num"]] = b.id
-
-        for row in settlement_rows:
-            db.add(
-                models.SettlementEntry(
-                    batch_id=batch_id_by_num[row["batch_num"]],
-                    order_ref=row["order_ref"],
-                    gross_amount=row["gross_amount"],
-                    fee=row["fee"],
-                    tax=row["tax"],
-                    refund=row["refund"],
-                    net_amount=row["net_amount"],
-                )
-            )
-
-        for row in order_rows:
-            db.add(
-                models.OrderRecord(
-                    order_ref=row["order_ref"],
-                    amount=row["amount"],
-                    status=row["status"],
-                    refund_amount=row["refund_amount"],
-                    fee_amount=row["fee_amount"],
-                )
-            )
-
-        db.commit()
-
-        counts = {
-            "bank_transactions": db.query(models.BankTransaction).count(),
-            "settlement_batches": db.query(models.SettlementBatch).count(),
-            "settlement_entries": db.query(models.SettlementEntry).count(),
-            "order_records": db.query(models.OrderRecord).count(),
-        }
-        return counts
-    finally:
-        db.close()
 
 
 def write_csvs(batches, settlement_rows, order_rows, bank_rows):
@@ -615,17 +536,12 @@ def write_ground_truth(ground_truth):
 def main():
     batches, settlement_rows, order_rows, bank_rows, ground_truth = build_dataset()
 
-    db_counts = write_to_db(batches, settlement_rows, order_rows, bank_rows)
     batches_path, settlement_path, bank_path, orders_path = write_csvs(
         batches, settlement_rows, order_rows, bank_rows
     )
     ground_truth_path = write_ground_truth(ground_truth)
 
     print("Synthetic data generation complete.")
-    print()
-    print("Database rows:")
-    for k, v in db_counts.items():
-        print(f"  {k}: {v}")
     print()
     print("CSV exports:")
     print(f"  {batches_path} ({len(batches)} rows)")

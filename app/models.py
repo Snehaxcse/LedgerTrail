@@ -9,11 +9,12 @@ class SettlementBatch(Base):
 
     id = Column(Integer, primary_key=True)
     settlement_date = Column(Date, nullable=False)
-    total_gross = Column(Float, nullable=False)
-    total_refunds = Column(Float, nullable=False)
-    total_fees = Column(Float, nullable=False)
-    total_tax = Column(Float, nullable=False)
-    total_net = Column(Float, nullable=False)
+    # Paise (integer), not decimal rupees -- see float-to-paise migration Phase 1.
+    total_gross = Column(Integer, nullable=False)
+    total_refunds = Column(Integer, nullable=False)
+    total_fees = Column(Integer, nullable=False)
+    total_tax = Column(Integer, nullable=False)
+    total_net = Column(Integer, nullable=False)
     bank_transaction_id = Column(Integer, ForeignKey("bank_transactions.id"), unique=True, nullable=True)
 
     bank_transaction = relationship("BankTransaction", backref=backref("matched_batch", uselist=False))
@@ -25,18 +26,20 @@ class SettlementEntry(Base):
     id = Column(Integer, primary_key=True)
     batch_id = Column(Integer, ForeignKey("settlement_batches.id"), nullable=False)
     order_ref = Column(String, nullable=False, index=True)
-    gross_amount = Column(Float, nullable=False)
-    fee = Column(Float, nullable=False)
-    tax = Column(Float, nullable=False)
-    refund = Column(Float, nullable=False, default=0.0)
-    net_amount = Column(Float, nullable=False)
+    # Paise (integer), not decimal rupees -- see float-to-paise migration Phase 1.
+    gross_amount = Column(Integer, nullable=False)
+    fee = Column(Integer, nullable=False)
+    tax = Column(Integer, nullable=False)
+    refund = Column(Integer, nullable=False, default=0)
+    net_amount = Column(Integer, nullable=False)
 
 
 class BankTransaction(Base):
     __tablename__ = "bank_transactions"
 
     id = Column(Integer, primary_key=True)
-    amount = Column(Float, nullable=False)
+    # Paise (integer), not decimal rupees -- see float-to-paise migration Phase 1.
+    amount = Column(Integer, nullable=False)
     date = Column(Date, nullable=False)
     reference = Column(String, nullable=False, index=True)
     description = Column(String, nullable=True)
@@ -47,10 +50,11 @@ class OrderRecord(Base):
 
     id = Column(Integer, primary_key=True)
     order_ref = Column(String, nullable=False, index=True)
-    amount = Column(Float, nullable=False)
+    # Paise (integer), not decimal rupees -- see float-to-paise migration Phase 1.
+    amount = Column(Integer, nullable=False)
     status = Column(String, nullable=False)
-    refund_amount = Column(Float, nullable=True)
-    fee_amount = Column(Float, nullable=False)
+    refund_amount = Column(Integer, nullable=True)
+    fee_amount = Column(Integer, nullable=False)
 
 
 class Match(Base):
@@ -71,7 +75,8 @@ class ExceptionRecord(Base):
 
     id = Column(Integer, primary_key=True)
     batch_id = Column(Integer, ForeignKey("settlement_batches.id"), nullable=False)
-    unexplained_amount = Column(Float, nullable=False)
+    # Paise (integer), not decimal rupees -- see float-to-paise migration Phase 1.
+    unexplained_amount = Column(Integer, nullable=False)
     classification = Column(String, nullable=False)
     suggested_action = Column(String, nullable=True)
     status = Column(String, nullable=False, default="open")  # "open" | "approved" | "rejected"
