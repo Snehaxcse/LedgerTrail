@@ -36,13 +36,13 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 app = FastAPI(title="LedgerTrail")
 ensure_schema()
 
-# Allow-any-origin for now; tighten to the actual Vercel domain once known.
-# allow_credentials=False is required alongside allow_origins=["*"] -- browsers
-# reject a wildcard origin combined with credentialed requests, and this API
-# doesn't use cookies/credentials anyway.
+# Restricted to the real deployed frontend now that its domain is known.
+# allow_credentials=False is unaffected by this change -- this API still doesn't
+# use cookies/credentials -- but a specific origin list is tighter than "*"
+# regardless.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://ledger-trail-rho.vercel.app"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -70,18 +70,21 @@ API calls.)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-New Day 12 fully complete: backend hardening (ingestion errors, AI failure fallback,
-double-submission fix, 404 handling) + frontend edge cases (empty filter state,
-narrow browser resize, long text wrapping) all verified clean.
+New Day 13 complete: DEPLOYED AND VERIFIED LIVE.
+Backend: https://ledgertrail-1.onrender.com (Render, free tier, auto-stages demo
+data via startup script on every boot/cold-start — confirmed working on real
+infra, not just locally). Fixed a Python 3.14 vs 3.11 version mismatch during
+first deploy (PYTHON_VERSION env var, not runtime.txt, was the fix that worked).
+Frontend: https://ledger-trail-rho.vercel.app (Vercel, VITE_API_BASE_URL points
+to the Render backend). CORS restricted to this specific origin.
+Full end-to-end flow verified live: dashboard, batch 2's correct reconciliation
+state (Missing Refund approved by Sneha, Fee Tier Mismatch open), /transparency
+showing 7/7 detected 0 false positives on a REAL cold-start regeneration.
 
-New Day 13 in progress: deployment prep done (startup script auto-stages demo data
-on boot, CORS confirmed live via GET+preflight from both tools independently,
-frontend has configurable VITE_API_BASE_URL). Actual Render/Vercel deployment
-not yet started.
-
-Next: deploy backend to Render, frontend to Vercel, verify live end-to-end,
-then Days 14-15 (rehearsal). Journal entry mock (Tier 1, deferred from New Day 4)
-still pending — decide after rehearsal whether time remains for it.
+Next: Days 14-15 - rehearsal. Restage/reconfirm demo state on the LIVE deployed
+site specifically (not just local) before presenting, since the live site is
+what judges will actually see/click. Decide on journal entry mock (deferred
+Tier 1 item) only if time remains after rehearsal.
 
 ## How to run (when asked)
 - API: `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload`
