@@ -25,13 +25,17 @@ logger = logging.getLogger("ledgertrail.matching")
 # per data source, since a different bank or gateway could have a longer/shorter
 # typical credit lag.
 #
-# AMOUNT_TOLERANCE: set to exact equality (0) rather than a nonzero tolerance -- we
-# have no real settlement data exhibiting genuine paisa-level aggregation rounding
-# drift to calibrate a production tolerance against. A real deployment processing
-# actual multi-line-item settlements might need a small empirically-calibrated
-# tolerance; we're not guessing one here without data, same principle as disabling
-# unverified refund-rate anomaly detection.
-AMOUNT_TOLERANCE = 0
+# AMOUNT_TOLERANCE: restored to its original pre-migration value (100 paise =
+# Rs.1.00) for CANDIDATE-MATCHING purposes only -- this is the tolerance for
+# deciding whether a bank transaction is even a plausible candidate for a batch,
+# not a tolerance on whether a discrepancy gets flagged. That second decision
+# stays exact-equality: exceptions.py's TOLERANCE and bridge.py's
+# VARIANCE_TOLERANCE are both still 0, deliberately unchanged by this restore,
+# so a batch that matches within this window but isn't perfectly equal still
+# surfaces as UNEXPLAINED_VARIANCE rather than being silently absorbed. See
+# app/holdout_evaluation.py's docstring for the case this exists to make
+# reachable again.
+AMOUNT_TOLERANCE = 100
 DATE_WINDOW_DAYS = 3
 
 

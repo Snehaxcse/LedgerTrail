@@ -57,6 +57,10 @@ export function getTransparency() {
   return api('/transparency')
 }
 
+export function getHeldOutEvaluation() {
+  return api('/evaluation/held-out')
+}
+
 export function getTrend() {
   return api('/trend')
 }

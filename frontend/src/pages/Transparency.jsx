@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getTransparency } from '../api'
+import HeldOutEvaluation from '../components/HeldOutEvaluation'
 import { formatClassification, formatInr } from '../lib/format'
 
 function formatValue(value) {
@@ -140,6 +141,8 @@ export default function Transparency() {
           </div>
         </section>
       ) : null}
+
+      <HeldOutEvaluation />
     </div>
   )
 }

@@ -43,6 +43,23 @@ CLASSIFICATION_INFO = {
         "blocks_reconciliation": True,
         "suggested_action": "Add refund entry to internal order record; verify against payment gateway refund log.",
     },
+    # Reverse direction from MISSING_REFUND_RECORD: the ORDER record claims a
+    # refund the SETTLEMENT never deducted, not the other way around. Kept as a
+    # distinct classification rather than folded into MISSING_REFUND_RECORD --
+    # this is a genuinely different real-world scenario (a refund logged
+    # internally that the payment gateway may never have actually processed,
+    # vs. money that left via settlement with no internal record of it), and
+    # the two point a human reviewer toward different next actions.
+    "REFUND_NOT_IN_SETTLEMENT": {
+        "requires_approval": True,
+        "blocks_reconciliation": True,
+        "suggested_action": (
+            "Confirm whether this refund was actually processed by the payment gateway -- "
+            "the order record shows a refund this settlement does not reflect. Correct the "
+            "internal record if it was not processed, or expect the deduction in a later "
+            "settlement if it was."
+        ),
+    },
     "FEE_TIER_MISMATCH": {
         "requires_approval": True,
         "blocks_reconciliation": True,
@@ -107,7 +124,7 @@ _FIXED_SEVERITY = {
     "DUPLICATE_ENTRY": "low",
     "TIMING_DIFFERENCE": "info",
 }
-_AMOUNT_DEPENDENT_SEVERITY = {"MISSING_REFUND_RECORD", "FEE_TIER_MISMATCH"}
+_AMOUNT_DEPENDENT_SEVERITY = {"MISSING_REFUND_RECORD", "FEE_TIER_MISMATCH", "REFUND_NOT_IN_SETTLEMENT"}
 
 
 def _compute_severity(classification: str, unexplained_amount: float) -> str:
@@ -181,7 +198,8 @@ def _classify_batch(db, batch, match_row, bridge_result):
     # entry is checked (not just the first offender), so unrelated entry-level
     # problems in the same batch are each captured rather than the first masking
     # the rest.
-    missing_refund_hits = []  # (entry, order, delta)
+    missing_refund_hits = []  # (entry, order, delta) -- entry.refund > order.refund_amount
+    refund_not_in_settlement_hits = []  # (entry, order, delta) -- reverse direction
     fee_mismatch_hits = []  # (entry, order, delta)
     for entry in entries:
         order = (
@@ -195,6 +213,8 @@ def _classify_batch(db, batch, match_row, bridge_result):
         order_refund = order.refund_amount if order.refund_amount is not None else 0.0
         if entry.refund - order_refund > TOLERANCE:
             missing_refund_hits.append((entry, order, entry.refund - order_refund))
+        elif order_refund - entry.refund > TOLERANCE:
+            refund_not_in_settlement_hits.append((entry, order, order_refund - entry.refund))
 
         if abs(entry.fee - order.fee_amount) > TOLERANCE:
             fee_mismatch_hits.append((entry, order, abs(entry.fee - order.fee_amount)))
@@ -208,6 +228,15 @@ def _classify_batch(db, batch, match_row, bridge_result):
         total = sum(d for _, _, d in missing_refund_hits)
         findings.append(("MISSING_REFUND_RECORD", evidence, total))
 
+    if refund_not_in_settlement_hits:
+        evidence = _evidence(
+            ("settlement_entry", [e.id for e, _, _ in refund_not_in_settlement_hits]),
+            ("order_record", [o.id for _, o, _ in refund_not_in_settlement_hits]),
+            ("bank_transaction", batch.bank_transaction_id),
+        )
+        total = sum(d for _, _, d in refund_not_in_settlement_hits)
+        findings.append(("REFUND_NOT_IN_SETTLEMENT", evidence, total))
+
     if fee_mismatch_hits:
         evidence = _evidence(
             ("settlement_entry", [e.id for e, _, _ in fee_mismatch_hits]),
@@ -219,7 +248,12 @@ def _classify_batch(db, batch, match_row, bridge_result):
 
     # Catch-all: only when there's an unexplained bank-level variance AND nothing
     # entry-level already accounted for it.
-    if abs(match_diff) > TOLERANCE and not missing_refund_hits and not fee_mismatch_hits:
+    if (
+        abs(match_diff) > TOLERANCE
+        and not missing_refund_hits
+        and not refund_not_in_settlement_hits
+        and not fee_mismatch_hits
+    ):
         order_ids = [
             o.id
             for o in db.query(models.OrderRecord)

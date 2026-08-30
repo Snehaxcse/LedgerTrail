@@ -1,12 +1,20 @@
 """
 FastAPI layer over the existing reconciliation logic. Read-only except for
 POST /exceptions/{id}/approve. No matching/bridge/exception computation happens
-inside a REQUEST -- endpoints only read rows already written by the pipeline
-(and record human approval decisions), so handling an API request never re-runs
-classification and never discards a prior approval. The pipeline itself DOES
-run once, automatically, on app boot (see app.startup.run_startup_sequence,
-registered below) -- that's what guarantees a fresh deploy always starts from
-the known-good demo state, independent of anything a previous visitor did.
+inside a REQUEST against the REAL database -- endpoints only read rows already
+written by the pipeline (and record human approval decisions), so handling an
+API request never re-runs classification against production data and never
+discards a prior approval. The pipeline itself DOES run once, automatically, on
+app boot (see app.startup.run_startup_sequence, registered below) -- that's
+what guarantees a fresh deploy always starts from the known-good demo state,
+independent of anything a previous visitor did.
+
+The one deliberate exception: GET /evaluation/held-out DOES run the real
+pipeline inside a request, but against a fresh isolated in-memory database
+created by app.holdout_evaluation on every call -- it never imports or touches
+app.database.engine/SessionLocal, so the real ledgertrail.db is structurally
+unreachable from it, not just avoided by discipline. See that module's
+docstring and tests/test_holdout_evaluation.py.
 """
 import datetime
 import json
@@ -25,6 +33,7 @@ from app.ai_explain import generate_explanation
 from app.anomaly_detection import ANOMALY_CLASSIFICATIONS
 from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
+from app.holdout_evaluation import run_holdout_evaluation
 from app.matching import match_basis as _match_basis
 from app.money import paise_to_rupees
 from app.narration_verification import verify_narration
@@ -276,6 +285,38 @@ class TransparencySummary(BaseModel):
 class TransparencyResponse(BaseModel):
     planted_errors: List[PlantedErrorOut]
     summary: TransparencySummary
+
+
+class HeldOutCaseOut(BaseModel):
+    batch_label: str
+    case_type: str
+    expected_classification: Optional[str]
+    detected_classification: Optional[str]
+    detected: bool
+    outcome: Literal["true_positive", "false_positive", "false_negative", "true_negative", "ambiguous"]
+    is_reconciled: Optional[bool]
+    unsafe_auto_resolution: bool
+    note: Optional[str] = None
+
+
+class HeldOutMetricsOut(BaseModel):
+    records_evaluated: int
+    planted_exceptions: int
+    detected_exceptions: int
+    true_positives: int
+    false_positives: int
+    false_negatives: int
+    precision: Optional[float]
+    recall: Optional[float]
+    unresolved_ambiguous_cases: int
+    unsafe_auto_resolutions: int
+    runtime_seconds: float
+
+
+class HeldOutEvaluationOut(BaseModel):
+    metrics: HeldOutMetricsOut
+    cases: List[HeldOutCaseOut]
+    dataset_note: str
 
 
 class TimeSavedEstimate(BaseModel):
@@ -892,6 +933,23 @@ def get_transparency(db: Session = Depends(get_db)):
     )
 
     return TransparencyResponse(planted_errors=planted_errors_out, summary=summary)
+
+
+@app.get("/evaluation/held-out", response_model=HeldOutEvaluationOut)
+def get_held_out_evaluation():
+    """Runs app.holdout_evaluation.run_holdout_evaluation() -- the real pipeline,
+    against a fresh isolated in-memory database created inside that call, never
+    the real ledgertrail.db (no db: Session dependency is even injected here,
+    deliberately, since this endpoint has no legitimate reason to touch
+    production data). See that module's docstring for the two architectural
+    findings this dataset surfaces, and tests/test_holdout_evaluation.py for
+    the regression test proving production data is untouched by this call."""
+    result = run_holdout_evaluation()
+    return HeldOutEvaluationOut(
+        metrics=HeldOutMetricsOut(**result.metrics.__dict__),
+        cases=[HeldOutCaseOut(**c.__dict__) for c in result.cases],
+        dataset_note=result.dataset_note,
+    )
 
 
 @app.get("/stats", response_model=StatsResponse)
