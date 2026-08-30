@@ -70,21 +70,27 @@ API calls.)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-New Day 13 complete: DEPLOYED AND VERIFIED LIVE.
-Backend: https://ledgertrail-1.onrender.com (Render, free tier, auto-stages demo
-data via startup script on every boot/cold-start — confirmed working on real
-infra, not just locally). Fixed a Python 3.14 vs 3.11 version mismatch during
-first deploy (PYTHON_VERSION env var, not runtime.txt, was the fix that worked).
-Frontend: https://ledger-trail-rho.vercel.app (Vercel, VITE_API_BASE_URL points
-to the Render backend). CORS restricted to this specific origin.
-Full end-to-end flow verified live: dashboard, batch 2's correct reconciliation
-state (Missing Refund approved by Sneha, Fee Tier Mismatch open), /transparency
-showing 7/7 detected 0 false positives on a REAL cold-start regeneration.
+Group 1 polish complete (match_basis labeling, simulated operator identity with
+fixed dropdown of 3 demo users, dashboard stats card, SQLite/Postgres footer note).
 
-Next: Days 14-15 - rehearsal. Restage/reconfirm demo state on the LIVE deployed
-site specifically (not just local) before presenting, since the live site is
-what judges will actually see/click. Decide on journal entry mock (deferred
-Tier 1 item) only if time remains after rehearsal.
+Group 2 complete: AI narration verification feature built and verified. Bank
+transaction narrations now follow the REAL Razorpay settlement credit format
+(researched, not guessed: "NEFT CR: HDFC BANK [UTR] RAZORPAY SETTLEMENT" -- real
+narrations do NOT contain a batch ID, unlike our original assumption). Added 3
+unrelated noise bank transactions. AI verification correctly distinguishes all
+10 real settlement credits from all 3 noise transactions (13/13 correct, all via
+genuine ai_verified agreement with a deterministic keyword cross-check, never
+needed fallback). New "Data Sources" panel and "Bank Statement" page both live
+and verified. This directly answers the "AI is secondary to the product" critique.
+
+Still open from the improvement list: float->paise currency migration (flagged
+high-risk given fully deployed system, needs explicit decision), Razorpay data
+CONTRACT/adapter format research (partially done via narration research),
+concurrency compare-and-set on approve, hidden holdout dataset. Full auth
+explicitly decided against -- fixed dropdown chosen instead.
+
+Next: decide remaining scope given time left, then full regression pass,
+redeploy, re-verify live, then rehearsal.
 
 ## How to run (when asked)
 - API: `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload`
