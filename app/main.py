@@ -1,9 +1,12 @@
 """
 FastAPI layer over the existing reconciliation logic. Read-only except for
 POST /exceptions/{id}/approve. No matching/bridge/exception computation happens
-here -- endpoints only read rows already written by scripts/run_reconciliation.py
-(and record human approval decisions), so hitting the API never re-runs
-classification and never discards a prior approval.
+inside a REQUEST -- endpoints only read rows already written by the pipeline
+(and record human approval decisions), so handling an API request never re-runs
+classification and never discards a prior approval. The pipeline itself DOES
+run once, automatically, on app boot (see app.startup.run_startup_sequence,
+registered below) -- that's what guarantees a fresh deploy always starts from
+the known-good demo state, independent of anything a previous visitor did.
 """
 import datetime
 import json
@@ -12,6 +15,7 @@ from pathlib import Path
 from typing import Any, List, Literal, Optional, Union
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -21,6 +25,7 @@ from app.anomaly_detection import ANOMALY_CLASSIFICATIONS
 from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
 from app.nl_query import answer_query
+from app.startup import run_startup_sequence
 
 # Without this, "ledgertrail.ai_explain"'s path=ai_generated/path=fallback logs
 # (an explicit requirement, to track how often the fallback triggers) have no
@@ -30,6 +35,23 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 app = FastAPI(title="LedgerTrail")
 ensure_schema()
+
+# Allow-any-origin for now; tighten to the actual Vercel domain once known.
+# allow_credentials=False is required alongside allow_origins=["*"] -- browsers
+# reject a wildcard origin combined with credentialed requests, and this API
+# doesn't use cookies/credentials anyway.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def _on_startup():
+    run_startup_sequence()
 
 VARIANCE_TOLERANCE = bridge.VARIANCE_TOLERANCE
 

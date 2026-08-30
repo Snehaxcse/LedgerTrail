@@ -6,8 +6,10 @@ export class ApiError extends Error {
   }
 }
 
+const API_BASE = String(import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '') || '/api'
+
 async function api(path, options) {
-  const response = await fetch(`/api${path}`, options)
+  const response = await fetch(`${API_BASE}${path}`, options)
   if (!response.ok) {
     const detail = await response.text()
     throw new ApiError(detail || `Request failed (${response.status})`, response.status)
