@@ -1,9 +1,12 @@
 import Amount from './Amount'
+import NarrationVerify from './NarrationVerify'
 import { formatMatchLine } from '../lib/format'
 
 export default function BankPanel({ batch }) {
+  const bank = batch.bank_transaction
   const unmatched = batch.matched_bank_amount == null
   const matchLine = formatMatchLine(batch.match_type, batch.confidence_score, batch.match_basis)
+  const narration = bank?.description
 
   return (
     <section className="rounded-sm border border-rule bg-paper-raised">
@@ -25,8 +28,19 @@ export default function BankPanel({ batch }) {
             <p className="text-sm uppercase tracking-[0.14em] text-ink-muted">Matched bank amount</p>
             <Amount value={batch.matched_bank_amount} className="mt-1 block text-xl font-semibold text-ink" />
             {matchLine ? <p className="mt-1 text-sm text-ink-muted">{matchLine}</p> : null}
+            {bank?.reference ? (
+              <p className="mt-1 font-mono text-xs text-ink-muted">{bank.reference}</p>
+            ) : null}
           </div>
         )}
+
+        {narration ? (
+          <div>
+            <p className="text-sm uppercase tracking-[0.14em] text-ink-muted">Narration</p>
+            <p className="mt-1 text-sm leading-relaxed text-ink">{narration}</p>
+            {bank?.id != null ? <NarrationVerify bankTransactionId={bank.id} /> : null}
+          </div>
+        ) : null}
 
         <div>
           <p className="text-sm uppercase tracking-[0.14em] text-ink-muted">Variance</p>

@@ -69,6 +69,14 @@ export function getDataSources() {
   return api('/data-sources')
 }
 
+export function getBankTransactions() {
+  return api('/bank-transactions')
+}
+
+export function verifyBankNarration(bankTransactionId) {
+  return api(`/bank-transactions/${bankTransactionId}/verify-narration`)
+}
+
 export function getApprovers() {
   return api('/approvers')
 }

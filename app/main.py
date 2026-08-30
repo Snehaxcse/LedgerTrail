@@ -151,8 +151,13 @@ class BatchSummary(BaseModel):
     variance: Optional[float]
 
 
+class BankStatementRow(BankTransactionOut):
+    matched_batch_id: Optional[int] = None
+
+
 class BatchDetail(BatchSummary):
     entries: List[SettlementEntryOut]
+    bank_transaction: Optional[BankTransactionOut] = None
 
 
 class ExceptionOut(BaseModel):
@@ -453,6 +458,30 @@ def get_data_sources(db: Session = Depends(get_db)):
     )
 
 
+@app.get("/bank-transactions", response_model=List[BankStatementRow])
+def list_bank_transactions(db: Session = Depends(get_db)):
+    """Raw bank statement lines for this period -- settlement credits and the
+    unmatched noise rows alike. matched_batch_id is the existing matcher result
+    (SettlementBatch.bank_transaction_id reverse), not a new decision. Narration
+    verification is a separate on-demand call; this list does not run it."""
+    rows = (
+        db.query(models.BankTransaction)
+        .order_by(models.BankTransaction.date, models.BankTransaction.id)
+        .all()
+    )
+    return [
+        BankStatementRow(
+            id=row.id,
+            amount=row.amount,
+            date=row.date,
+            reference=row.reference,
+            description=row.description,
+            matched_batch_id=row.matched_batch.id if row.matched_batch else None,
+        )
+        for row in rows
+    ]
+
+
 @app.get("/bank-transactions/{bank_transaction_id}/verify-narration", response_model=NarrationVerificationOut)
 def verify_bank_transaction_narration(bank_transaction_id: int, db: Session = Depends(get_db)):
     """AI verification is a read-only, on-demand check -- nothing here is cached or
@@ -496,7 +525,11 @@ def get_batch(batch_id: int, db: Session = Depends(get_db)):
         .order_by(models.SettlementEntry.id)
         .all()
     )
-    return BatchDetail(**summary.model_dump(), entries=entries)
+    return BatchDetail(
+        **summary.model_dump(),
+        entries=entries,
+        bank_transaction=batch.bank_transaction,
+    )
 
 
 @app.get("/batches/{batch_id}/exceptions", response_model=List[ExceptionOut])

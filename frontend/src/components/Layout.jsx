@@ -33,6 +33,9 @@ export default function Layout({ children }) {
             <NavLink to="/" end className={navClass}>
               Batches
             </NavLink>
+            <NavLink to="/bank-statement" className={navClass}>
+              Bank statement
+            </NavLink>
             <NavLink to="/trend" className={navClass}>
               Over time
             </NavLink>
