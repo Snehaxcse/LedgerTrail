@@ -3,7 +3,7 @@ import { formatMatchLine } from '../lib/format'
 
 export default function BankPanel({ batch }) {
   const unmatched = batch.matched_bank_amount == null
-  const matchLine = formatMatchLine(batch.match_type, batch.confidence_score)
+  const matchLine = formatMatchLine(batch.match_type, batch.confidence_score, batch.match_basis)
 
   return (
     <section className="rounded-sm border border-rule bg-paper-raised">

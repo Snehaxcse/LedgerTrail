@@ -64,6 +64,20 @@ VARIANCE_TOLERANCE = bridge.VARIANCE_TOLERANCE
 # (e.g. /transparency).
 TIME_SAVED_MINUTES_PER_EXCEPTION = 15.0
 
+# Fixed set of demo operator identities. This is NOT authentication -- it's a
+# cheap closing of the "type literally anything" gap: POST /exceptions/{id}/approve
+# now rejects any approver not in this dict (see approve_exception below), instead
+# of accepting an arbitrary client-supplied string. Single source of truth: the
+# frontend's dropdown is populated from GET /approvers (below) rather than keeping
+# its own hardcoded copy of these names, so the two can't drift out of sync.
+# "Sneha" must stay in this dict -- app/startup.py's DEMO_APPROVER stages the
+# demo's "before" approval example under that exact name.
+DEMO_APPROVERS = {
+    "Sneha": "Finance Analyst",
+    "Rahul": "Reconciliation Analyst",
+    "Priya": "Settlements Lead",
+}
+
 GROUND_TRUTH_PATH = Path(__file__).resolve().parent.parent / "data" / "ground_truth.json"
 
 # ground_truth.json's error "type" strings (chosen by the synthetic data generator)
@@ -176,9 +190,11 @@ class AnomalyEvidenceOut(BaseModel):
 
 class ApprovalRequest(BaseModel):
     approver: str = Field(
-        description="Client-supplied name, recorded as-is in ApprovalLog/AuditEvent. "
-        "There is no authentication behind this in this demo -- the caller can put "
-        "any string here. Treat it as a simulated operator identity, not a verified one."
+        description="Must be one of the fixed demo names in GET /approvers -- checked "
+        "server-side, rejected otherwise (see approve_exception). Still not real "
+        "authentication: picking a name from a list proves nothing about who is "
+        "actually calling this endpoint, it just closes the 'type literally anything' "
+        "gap of a free-text field. Recorded as-is in ApprovalLog/AuditEvent."
     )
     decision: Literal["approved", "rejected"]
     reason: Optional[str] = None
@@ -189,6 +205,11 @@ class ApprovalResponse(BaseModel):
     status: str
     approval_log_id: int
     reason: Optional[str] = None
+
+
+class DemoApproverOut(BaseModel):
+    name: str
+    role: str
 
 
 class AuditEventOut(BaseModel):
@@ -360,6 +381,14 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/approvers", response_model=List[DemoApproverOut])
+def list_approvers():
+    """The fixed list POST /exceptions/{id}/approve validates body.approver against
+    (see DEMO_APPROVERS). The frontend's dropdown is populated from this endpoint
+    rather than keeping its own hardcoded copy, so the two can't drift apart."""
+    return [DemoApproverOut(name=name, role=role) for name, role in DEMO_APPROVERS.items()]
+
+
 @app.get("/batches", response_model=List[BatchSummary])
 def list_batches(db: Session = Depends(get_db)):
     batches = db.query(models.SettlementBatch).order_by(models.SettlementBatch.id).all()
@@ -516,12 +545,13 @@ def get_exception_evidence(batch_id: int, exception_id: int, db: Session = Depen
 
 @app.post("/exceptions/{exception_id}/approve", response_model=ApprovalResponse)
 def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = Depends(get_db)):
-    """SIMULATED OPERATOR IDENTITY: body.approver is an unauthenticated, client-supplied
-    string -- there is no login/session/token behind it, so anyone calling this endpoint
-    can claim to be anyone. It's recorded verbatim into ApprovalLog and AuditEvent as
-    that simulated identity, same as the frontend's own "Simulated" approve/reject
-    copy already tells the user. This is a demo-scope limitation, documented here
-    rather than fixed -- see ApprovalRequest.approver's own description too."""
+    """SIMULATED OPERATOR IDENTITY: body.approver must be one of the fixed names in
+    DEMO_APPROVERS (validated below) -- there is still no login/session/token behind
+    it, so this only proves the caller picked a name off a list, not who they actually
+    are. It's recorded verbatim into ApprovalLog and AuditEvent as that simulated
+    identity, same as the frontend's own "Simulated" approve/reject copy already
+    tells the user. This is a demo-scope limitation, documented here rather than
+    fixed -- see ApprovalRequest.approver's own description too."""
     exc = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id == exception_id).first()
     if exc is None:
         raise HTTPException(status_code=404, detail=f"ExceptionRecord {exception_id} not found")
@@ -535,6 +565,15 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
             detail=(
                 f"Exception {exception_id} is already {exc.status} — "
                 "cannot approve/reject an already-resolved exception."
+            ),
+        )
+
+    if body.approver not in DEMO_APPROVERS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{body.approver}' is not a recognized demo approver. "
+                f"Valid names: {', '.join(DEMO_APPROVERS)}."
             ),
         )
 

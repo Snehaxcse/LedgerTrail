@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Amount from './Amount'
 import AiExplanation from './AiExplanation'
 import EvidencePanel from './EvidencePanel'
+import { getApprovers } from '../api'
 import { formatClassification } from '../lib/format'
 
 const STATUS_STYLES = {
@@ -41,6 +42,23 @@ export default function ExceptionQueue({
   const reasonRefs = useRef({})
   const [missingReasonId, setMissingReasonId] = useState(null)
   const [severityFilter, setSeverityFilter] = useState('all')
+  const [approvers, setApprovers] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    getApprovers()
+      .then((list) => {
+        if (!cancelled) setApprovers(list)
+      })
+      .catch(() => {
+        // Non-fatal: the dropdown just stays empty and approve/reject stays
+        // disabled (same as the old "no name typed yet" state) -- the server
+        // validates approver regardless, so nothing unsafe can slip through.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const blockingOpen = exceptions.filter(
     (row) => row.status === 'open' && row.requires_approval,
   )
@@ -108,19 +126,30 @@ export default function ExceptionQueue({
               })}
             </div>
           </div>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-muted">
-              Approver
-            </span>
-            <input
-              type="text"
-              value={approver}
-              onChange={(event) => onApproverChange(event.target.value)}
-              placeholder="Your name"
-              autoComplete="name"
-              className="w-56 rounded-sm border border-rule bg-paper px-3 py-1.5 text-ink outline-none focus:border-forest"
-            />
-          </label>
+          <div className="flex flex-col gap-1">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-muted">
+                Approver
+              </span>
+              <select
+                value={approver}
+                onChange={(event) => onApproverChange(event.target.value)}
+                className="w-56 rounded-sm border border-rule bg-paper px-3 py-1.5 text-ink outline-none focus:border-forest"
+              >
+                <option value="">Select an approver…</option>
+                {approvers.map((person) => (
+                  <option key={person.name} value={person.name}>
+                    {person.name} — {person.role}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="max-w-[16rem] border border-dashed border-brass/70 bg-amber-wash px-2 py-1 text-[11px] leading-snug text-ink">
+              <span className="font-semibold text-brass">Simulated operator identity</span>
+              {' — '}
+              a fixed list of demo names, not real authentication.
+            </p>
+          </div>
         </div>
       </header>
 
@@ -200,7 +229,7 @@ export default function ExceptionQueue({
                         </button>
                         {!approver.trim() ? (
                           <span className="self-center text-xs text-ink-muted">
-                            Enter an approver name to decide.
+                            Select an approver to decide.
                           </span>
                         ) : reasonMissing ? (
                           <span className="self-center text-xs text-rust">

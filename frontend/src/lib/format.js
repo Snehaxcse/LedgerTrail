@@ -71,11 +71,14 @@ export function formatDateTime(iso) {
   })
 }
 
-export function formatMatchLine(matchType, confidenceScore) {
-  if (!matchType && (confidenceScore === null || confidenceScore === undefined)) return null
-  const type = matchType || 'unknown'
+export function formatMatchLine(matchType, confidenceScore, matchBasis) {
+  const basis = matchBasis || null
+  const type = matchType || null
   const percent = formatPercent(confidenceScore)
-  return percent ? `Matched: ${type} (${percent})` : `Matched: ${type}`
+  if (!basis && !type && !percent) return null
+  const label = basis || (type ? `Matched: ${type}` : null)
+  if (label && percent) return `${label} (${percent})`
+  return label || percent
 }
 
 export function formatClassification(code) {

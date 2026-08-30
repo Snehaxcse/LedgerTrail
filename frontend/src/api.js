@@ -61,6 +61,14 @@ export function getTrend() {
   return api('/trend')
 }
 
+export function getStats() {
+  return api('/stats')
+}
+
+export function getApprovers() {
+  return api('/approvers')
+}
+
 export async function getExceptionIndex() {
   const batches = await getBatches()
   const lists = await Promise.all(batches.map((batch) => getBatchExceptions(batch.id)))

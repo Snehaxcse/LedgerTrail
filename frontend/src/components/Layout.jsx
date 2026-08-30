@@ -46,6 +46,12 @@ export default function Layout({ children }) {
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl px-5 py-8">{children}</main>
+      <footer className="border-t border-rule/80">
+        <p className="mx-auto max-w-6xl px-5 py-4 text-xs leading-relaxed text-ink-muted">
+          This demo uses SQLite for simplicity; a production deployment would use PostgreSQL
+          for concurrent finance operations.
+        </p>
+      </footer>
     </div>
   )
 }

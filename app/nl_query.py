@@ -43,7 +43,11 @@ SYSTEM_PROMPT = (
     "all batches' that do not say 'open' explicitly. You must use that provided "
     "figure directly. Never add up individual exception amounts yourself to "
     "produce a different total, even if you believe a differently-scoped total "
-    "would also be a reasonable answer."
+    "would also be a reasonable answer. "
+    "confidence_score and match_type describe how a settlement was matched to a "
+    "bank transaction (based on date proximity), not a statistical confidence "
+    "interval. If asked about match confidence, describe it as how closely "
+    "dates/amounts aligned, not as a probability or certainty measure."
 )
 
 OUT_OF_SCOPE_TEXT = "I don't have that information in the current data."

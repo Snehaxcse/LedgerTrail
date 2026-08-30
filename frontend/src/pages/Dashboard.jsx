@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getBatches } from '../api'
+import { getBatches, getStats } from '../api'
 import MiniBridge from '../components/MiniBridge'
 import StatusBanner from '../components/StatusBanner'
 import Amount from '../components/Amount'
@@ -8,14 +8,17 @@ import { formatDate } from '../lib/format'
 
 export default function Dashboard() {
   const [batches, setBatches] = useState([])
+  const [stats, setStats] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
-    getBatches()
-      .then((data) => {
-        if (!cancelled) setBatches(data)
+    Promise.all([getBatches(), getStats().catch(() => null)])
+      .then(([batchData, statsData]) => {
+        if (cancelled) return
+        setBatches(batchData)
+        setStats(statsData)
       })
       .catch((err) => {
         if (!cancelled) setError(err.message)
@@ -59,6 +62,8 @@ export default function Dashboard() {
         </div>
       ) : null}
 
+      {stats ? <StatsCard stats={stats} /> : null}
+
       <ul className="space-y-4">
         {batches.map((batch) => (
           <li key={batch.id}>
@@ -88,6 +93,35 @@ export default function Dashboard() {
         ))}
       </ul>
     </div>
+  )
+}
+
+function StatsCard({ stats }) {
+  const saved = stats.time_saved
+  const minutes = saved?.estimated_minutes_saved
+
+  return (
+    <section className="mb-6 border border-ink/20 bg-paper-raised px-5 py-5">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-muted">
+        This pass
+      </p>
+      <p className="mt-2 font-serif text-2xl tracking-tight text-ink sm:text-3xl">
+        {stats.batches_reconciled_automatically} of {stats.total_batches} batches
+        reconciled automatically, {stats.batches_requiring_review} required human
+        review
+      </p>
+      {minutes != null ? (
+        <div className="mt-4 border-t border-rule pt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brass">
+            Estimated time saved
+          </p>
+          <p className="mt-1 font-serif text-2xl text-ink">{minutes} minutes</p>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-muted">
+            {saved?.assumption || 'An estimate only — not a measured or verified figure.'}
+          </p>
+        </div>
+      ) : null}
+    </section>
   )
 }
 
