@@ -307,6 +307,10 @@ def build_dataset():
         if cfg.get("fee_drift"):
             batch_settlement_rows = settlement_rows[batch_settlement_start:]
             batch_order_rows = order_rows[batch_order_start:]
+            # Captured before mutation: what this batch's own fee_rate would have
+            # been without the drift, i.e. the "expected" side of the ground-truth
+            # entry below.
+            pre_drift_fee_rate = batch_total_fees / batch_total_gross
             apply_fee_drift(batch_settlement_rows, batch_order_rows)
             # Totals must reflect the drifted fees, not the pre-drift accumulation
             # above -- re-derive them from the (now mutated) rows rather than patch
@@ -315,6 +319,27 @@ def build_dataset():
             batch_total_tax = sum(r["tax"] for r in batch_settlement_rows)
             batch_total_net = sum(r["net_amount"] for r in batch_settlement_rows)
             # gross and refunds are untouched by fee drift -- no change needed.
+            post_drift_fee_rate = batch_total_fees / batch_total_gross
+
+            # Unlike every other injected role above, this error is batch-wide
+            # (no single order_ref) -- it's only visible as a statistical outlier
+            # in fee_rate (see app/anomaly_detection.py), not any per-order mismatch.
+            ground_truth.append(
+                {
+                    "type": "systemic_fee_drift",
+                    "order_ref": None,
+                    "batch_id": batch_num,
+                    "expected_value": round(pre_drift_fee_rate, 6),
+                    "actual_value": round(post_drift_fee_rate, 6),
+                    "description": (
+                        f"Batch {batch_num}: fee_rate is {post_drift_fee_rate:.2%} "
+                        f"(Rs.{batch_total_fees:.2f} fees on Rs.{batch_total_gross:.2f} gross) vs. "
+                        f"an undrifted {pre_drift_fee_rate:.2%} -- every entry's fee was uniformly "
+                        f"inflated by apply_fee_drift(), visible only as a batch-wide statistical "
+                        f"outlier, not any single order-level mismatch."
+                    ),
+                }
+            )
 
         batch_total_gross = round2(batch_total_gross)
         batch_total_fees = round2(batch_total_fees)

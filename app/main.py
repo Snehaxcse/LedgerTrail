@@ -66,6 +66,7 @@ GROUND_TRUTH_TYPE_TO_CLASSIFICATION = {
     "wrong_fee_tier": "FEE_TIER_MISMATCH",
     "duplicate_entry": "DUPLICATE_ENTRY",
     "timing_mismatch": "TIMING_DIFFERENCE",
+    "systemic_fee_drift": "SYSTEMIC_FEE_DRIFT",
 }
 
 

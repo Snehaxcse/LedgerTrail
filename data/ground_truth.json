@@ -46,5 +46,13 @@
     "expected_value": "1 settlement entry",
     "actual_value": "2 settlement entries (identical)",
     "description": "OD-06-0001: appears twice in the settlement batch with identical amounts, but the bank credit only reflects it once."
+  },
+  {
+    "type": "systemic_fee_drift",
+    "order_ref": null,
+    "batch_id": 9,
+    "expected_value": 0.02485,
+    "actual_value": 0.02982,
+    "description": "Batch 9: fee_rate is 2.98% (Rs.4670.51 fees on Rs.156623.30 gross) vs. an undrifted 2.49% -- every entry's fee was uniformly inflated by apply_fee_drift(), visible only as a batch-wide statistical outlier, not any single order-level mismatch."
   }
 ]
