@@ -25,6 +25,7 @@ from app.anomaly_detection import ANOMALY_CLASSIFICATIONS
 from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
 from app.matching import match_basis as _match_basis
+from app.money import paise_to_rupees
 from app.narration_verification import verify_narration
 from app.nl_query import answer_query
 from app.startup import run_startup_sequence
@@ -336,6 +337,43 @@ def _match_for_batch(db: Session, batch_id: int) -> Optional[models.Match]:
     )
 
 
+# Explicit constructors for the three money-bearing sub-schemas, replacing reliance
+# on from_attributes=True auto-mapping straight off the ORM object -- that would
+# copy paise integers through untouched. paise_to_rupees() is applied here, at
+# construction time, same boundary rule as everywhere else in this file.
+def _settlement_entry_out(e: models.SettlementEntry) -> SettlementEntryOut:
+    return SettlementEntryOut(
+        id=e.id,
+        order_ref=e.order_ref,
+        gross_amount=paise_to_rupees(e.gross_amount),
+        fee=paise_to_rupees(e.fee),
+        tax=paise_to_rupees(e.tax),
+        refund=paise_to_rupees(e.refund),
+        net_amount=paise_to_rupees(e.net_amount),
+    )
+
+
+def _order_record_out(o: models.OrderRecord) -> OrderRecordOut:
+    return OrderRecordOut(
+        id=o.id,
+        order_ref=o.order_ref,
+        amount=paise_to_rupees(o.amount),
+        status=o.status,
+        refund_amount=paise_to_rupees(o.refund_amount),
+        fee_amount=paise_to_rupees(o.fee_amount),
+    )
+
+
+def _bank_transaction_out(t: models.BankTransaction) -> BankTransactionOut:
+    return BankTransactionOut(
+        id=t.id,
+        amount=paise_to_rupees(t.amount),
+        date=t.date,
+        reference=t.reference,
+        description=t.description,
+    )
+
+
 def _batch_summary(db: Session, batch: models.SettlementBatch) -> BatchSummary:
     match_row = _match_for_batch(db, batch.id)
     bank_amount = batch.bank_transaction.amount if batch.bank_transaction_id else None
@@ -362,20 +400,24 @@ def _batch_summary(db: Session, batch: models.SettlementBatch) -> BatchSummary:
         and abs(variance) <= VARIANCE_TOLERANCE
     )
 
+    # is_reconciled above was decided using the paise-scale bank_amount/variance --
+    # this is the boundary: paise_to_rupees() applied only now, at response
+    # construction, never before. confidence_score is a heuristic weight, not
+    # money, and is deliberately left unconverted.
     return BatchSummary(
         id=batch.id,
         settlement_date=batch.settlement_date,
-        total_gross=batch.total_gross,
-        total_refunds=batch.total_refunds,
-        total_fees=batch.total_fees,
-        total_tax=batch.total_tax,
-        total_net=batch.total_net,
-        matched_bank_amount=bank_amount,
+        total_gross=paise_to_rupees(batch.total_gross),
+        total_refunds=paise_to_rupees(batch.total_refunds),
+        total_fees=paise_to_rupees(batch.total_fees),
+        total_tax=paise_to_rupees(batch.total_tax),
+        total_net=paise_to_rupees(batch.total_net),
+        matched_bank_amount=paise_to_rupees(bank_amount),
         match_type=match_row.match_type if match_row else None,
         confidence_score=match_row.confidence_score if match_row else None,
         match_basis=_match_basis(match_row.match_type if match_row else None),
         is_reconciled=is_reconciled,
-        variance=variance,
+        variance=paise_to_rupees(variance),
     )
 
 
@@ -472,7 +514,7 @@ def list_bank_transactions(db: Session = Depends(get_db)):
     return [
         BankStatementRow(
             id=row.id,
-            amount=row.amount,
+            amount=paise_to_rupees(row.amount),
             date=row.date,
             reference=row.reference,
             description=row.description,
@@ -493,10 +535,13 @@ def verify_bank_transaction_narration(bank_transaction_id: int, db: Session = De
     if txn is None:
         raise HTTPException(status_code=404, detail=f"BankTransaction {bank_transaction_id} not found")
 
+    # This dict becomes AI-prompt context -- paise_to_rupees() applied here, at the
+    # boundary, so the AI never sees a 100x-inflated paise-as-rupees figure, even
+    # though the current system prompt doesn't ask it to reason about amount at all.
     result = verify_narration(
         {
             "description": txn.description,
-            "amount": txn.amount,
+            "amount": paise_to_rupees(txn.amount),
             "date": txn.date.isoformat(),
         }
     )
@@ -527,8 +572,8 @@ def get_batch(batch_id: int, db: Session = Depends(get_db)):
     )
     return BatchDetail(
         **summary.model_dump(),
-        entries=entries,
-        bank_transaction=batch.bank_transaction,
+        entries=[_settlement_entry_out(e) for e in entries],
+        bank_transaction=_bank_transaction_out(batch.bank_transaction) if batch.bank_transaction else None,
     )
 
 
@@ -563,7 +608,7 @@ def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db)):
                 id=e.id,
                 batch_id=e.batch_id,
                 classification=e.classification,
-                unexplained_amount=e.unexplained_amount,
+                unexplained_amount=paise_to_rupees(e.unexplained_amount),
                 suggested_action=e.suggested_action,
                 status=e.status,
                 requires_approval=info.get("requires_approval", False),
@@ -622,7 +667,11 @@ def _resolve_evidence(db: Session, entry_ids, order_ids, bank_ids) -> EvidenceOu
         if bank_ids
         else []
     )
-    return EvidenceOut(settlement_entries=entries, order_records=orders, bank_transactions=bank_txns)
+    return EvidenceOut(
+        settlement_entries=[_settlement_entry_out(e) for e in entries],
+        order_records=[_order_record_out(o) for o in orders],
+        bank_transactions=[_bank_transaction_out(t) for t in bank_txns],
+    )
 
 
 @app.get("/batches/{batch_id}/evidence", response_model=EvidenceOut)
@@ -879,9 +928,12 @@ def explain_exception(batch_id: int, exception_id: int, db: Session = Depends(ge
     entry_ids, order_ids, bank_ids = _extract_evidence_ids(exc.linked_evidence_ids)
     evidence = _resolve_evidence(db, entry_ids, order_ids, bank_ids)
 
+    # This dict becomes AI-prompt text (and the fallback string) -- paise_to_rupees()
+    # applied here, at the boundary, so the AI never sees/states a 100x-inflated
+    # paise-as-rupees figure. evidence is already converted (see _resolve_evidence).
     exception_record = {
         "classification": exc.classification,
-        "unexplained_amount": exc.unexplained_amount,
+        "unexplained_amount": paise_to_rupees(exc.unexplained_amount),
         "suggested_action": exc.suggested_action,
     }
     result = generate_explanation(exception_record, evidence.model_dump())
@@ -952,7 +1004,7 @@ def get_trend(db: Session = Depends(get_db)):
                 batch_id=batch.id,
                 is_reconciled=summary.is_reconciled,
                 variance=summary.variance,
-                total_net=batch.total_net,
+                total_net=paise_to_rupees(batch.total_net),
             )
         )
     return entries
