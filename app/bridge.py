@@ -23,7 +23,13 @@ from sqlalchemy.orm import Session
 
 from app import models
 
-VARIANCE_TOLERANCE = 0.01  # rupees, absorbs float rounding
+# Set to exact equality (0) rather than a nonzero tolerance -- we have no real
+# settlement data exhibiting genuine paisa-level aggregation rounding drift to
+# calibrate a production tolerance against. A real deployment processing actual
+# multi-line-item settlements might need a small empirically-calibrated tolerance;
+# we're not guessing one here without data, same principle as disabling unverified
+# refund-rate anomaly detection.
+VARIANCE_TOLERANCE = 0
 
 
 @dataclass
@@ -34,10 +40,6 @@ class BridgeResult:
     matched_bank_amount: Optional[float]
     variance: Optional[float]
     is_reconciled: bool
-
-
-def _round2(x):
-    return round(x, 2)
 
 
 def compute_bridge(db: Session) -> List[BridgeResult]:
@@ -51,7 +53,9 @@ def compute_bridge(db: Session) -> List[BridgeResult]:
         sum_tax = sum(e.tax for e in entries)
         sum_refund = sum(e.refund for e in entries)
 
-        bridge_net = _round2(sum_gross - sum_refund - sum_fee - sum_tax)
+        # No rounding needed -- these are integer paise sums, exact by construction,
+        # unlike the rupee-float sums this used to round via _round2() (removed).
+        bridge_net = sum_gross - sum_refund - sum_fee - sum_tax
         total_net = batch.total_net
 
         matched_bank_amount = batch.bank_transaction.amount if batch.bank_transaction_id else None
@@ -60,7 +64,7 @@ def compute_bridge(db: Session) -> List[BridgeResult]:
             variance = None
             is_reconciled = False
         else:
-            variance = _round2(total_net - matched_bank_amount)
+            variance = total_net - matched_bank_amount
             is_reconciled = abs(variance) <= VARIANCE_TOLERANCE
 
         results.append(

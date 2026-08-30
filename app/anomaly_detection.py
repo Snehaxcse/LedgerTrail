@@ -191,7 +191,11 @@ def detect_anomalies(db: Session) -> List[AnomalyResult]:
             if not is_sig:
                 continue
 
-            unexplained_amount = round(abs((observed - mean) * gross_by_id[b.id]), 2)
+            # Rounds to the nearest whole paisa, not 2 decimal places -- gross_by_id
+            # is already integer paise (see float-to-paise migration), so "2 decimal
+            # places" would mean fractional paise, which isn't a real unit. round()
+            # with no ndigits returns the nearest int in Python 3.
+            unexplained_amount = round(abs((observed - mean) * gross_by_id[b.id]))
 
             results.append(
                 AnomalyResult(

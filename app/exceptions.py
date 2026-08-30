@@ -17,7 +17,13 @@ from sqlalchemy.orm import Session
 
 from app import models, bridge
 
-TOLERANCE = 0.01
+# Set to exact equality (0) rather than a nonzero tolerance -- we have no real
+# settlement data exhibiting genuine paisa-level aggregation rounding drift to
+# calibrate a production tolerance against. A real deployment processing actual
+# multi-line-item settlements might need a small empirically-calibrated tolerance;
+# we're not guessing one here without data, same principle as disabling unverified
+# refund-rate anomaly detection.
+TOLERANCE = 0
 
 # Hardcoded classification -> (requires_approval, blocks_reconciliation, suggested_action).
 # Never let an LLM generate or alter this table.
@@ -89,10 +95,6 @@ class ExceptionResult:
     severity: Optional[str] = None  # "high" | "medium" | "low" | "info"
 
 
-def _round2(x):
-    return round(x, 2)
-
-
 # Severity weighting: a pure, deterministic rule layer on top of classification.
 # Does not touch CLASSIFICATION_INFO, requires_approval, blocks_reconciliation, or
 # is_reconciled -- those are computed exactly as before. Never let an LLM generate
@@ -157,8 +159,10 @@ def _classify_batch(db, batch, match_row, bridge_result):
 
     findings = []
 
-    match_diff = _round2(batch.total_net - batch.bank_transaction.amount)
-    bridge_diff = _round2(bridge_result.bridge_net - batch.total_net)
+    # No rounding needed -- integer paise subtraction is exact, unlike the rupee-float
+    # subtraction this used to round via _round2() (removed).
+    match_diff = batch.total_net - batch.bank_transaction.amount
+    bridge_diff = bridge_result.bridge_net - batch.total_net
 
     if abs(bridge_diff) > TOLERANCE:
         dupes = _duplicate_entries(entries)
@@ -201,7 +205,7 @@ def _classify_batch(db, batch, match_row, bridge_result):
             ("order_record", [o.id for _, o, _ in missing_refund_hits]),
             ("bank_transaction", batch.bank_transaction_id),
         )
-        total = _round2(sum(d for _, _, d in missing_refund_hits))
+        total = sum(d for _, _, d in missing_refund_hits)
         findings.append(("MISSING_REFUND_RECORD", evidence, total))
 
     if fee_mismatch_hits:
@@ -210,7 +214,7 @@ def _classify_batch(db, batch, match_row, bridge_result):
             ("order_record", [o.id for _, o, _ in fee_mismatch_hits]),
             ("bank_transaction", batch.bank_transaction_id),
         )
-        total = _round2(sum(d for _, _, d in fee_mismatch_hits))
+        total = sum(d for _, _, d in fee_mismatch_hits)
         findings.append(("FEE_TIER_MISMATCH", evidence, total))
 
     # Catch-all: only when there's an unexplained bank-level variance AND nothing
@@ -291,7 +295,8 @@ def classify_exceptions(db: Session) -> List[ExceptionResult]:
             continue
 
         for classification, evidence, unexplained_amount in findings:
-            unexplained_amount = _round2(unexplained_amount)
+            # No rounding needed -- already an exact integer paise value, unlike the
+            # rupee-float value this used to round via _round2() (removed).
             info = CLASSIFICATION_INFO[classification]
             requires_approval = info["requires_approval"]
             blocks_reconciliation = info["blocks_reconciliation"]

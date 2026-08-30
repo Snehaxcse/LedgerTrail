@@ -19,12 +19,19 @@ from app import models
 
 logger = logging.getLogger("ledgertrail.matching")
 
-# These two values were picked for this synthetic dataset (rupee rounding noise,
-# and the largest deliberately-injected settlement/bank date gap being 2 days) --
-# not derived from any real payment gateway's actual behavior. A production
-# version would make both configurable per data source, since a different bank
-# or gateway could round differently or have a longer/shorter typical credit lag.
-AMOUNT_TOLERANCE = 1.00  # rupees, absorbs rounding
+# DATE_WINDOW_DAYS was picked for this synthetic dataset (the largest deliberately-
+# injected settlement/bank date gap being 2 days) -- not derived from any real
+# payment gateway's actual behavior. A production version would make it configurable
+# per data source, since a different bank or gateway could have a longer/shorter
+# typical credit lag.
+#
+# AMOUNT_TOLERANCE: set to exact equality (0) rather than a nonzero tolerance -- we
+# have no real settlement data exhibiting genuine paisa-level aggregation rounding
+# drift to calibrate a production tolerance against. A real deployment processing
+# actual multi-line-item settlements might need a small empirically-calibrated
+# tolerance; we're not guessing one here without data, same principle as disabling
+# unverified refund-rate anomaly detection.
+AMOUNT_TOLERANCE = 0
 DATE_WINDOW_DAYS = 3
 
 
