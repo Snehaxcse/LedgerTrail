@@ -212,6 +212,18 @@ class DemoApproverOut(BaseModel):
     role: str
 
 
+class DataSourceOut(BaseModel):
+    name: str
+    format: str
+    record_count: int
+    description: str
+
+
+class DataSourcesResponse(BaseModel):
+    sources: List[DataSourceOut]
+    note: str
+
+
 class AuditEventOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -387,6 +399,50 @@ def list_approvers():
     (see DEMO_APPROVERS). The frontend's dropdown is populated from this endpoint
     rather than keeping its own hardcoded copy, so the two can't drift apart."""
     return [DemoApproverOut(name=name, role=role) for name, role in DEMO_APPROVERS.items()]
+
+
+@app.get("/data-sources", response_model=DataSourcesResponse)
+def get_data_sources(db: Session = Depends(get_db)):
+    """The three conceptually independent inputs this system reconciles -- record
+    counts are queried live, not hardcoded, so this stays accurate across regens."""
+    return DataSourcesResponse(
+        sources=[
+            DataSourceOut(
+                name="Razorpay Settlement Report",
+                format="CSV export",
+                record_count=(
+                    db.query(models.SettlementBatch).count()
+                    + db.query(models.SettlementEntry).count()
+                ),
+                description=(
+                    "Settlement batches and per-order breakdown, as exported from "
+                    "the Razorpay Dashboard"
+                ),
+            ),
+            DataSourceOut(
+                name="Bank Statement",
+                format="CSV",
+                record_count=db.query(models.BankTransaction).count(),
+                description=(
+                    "HDFC Bank account statement showing settlement credits and "
+                    "other transactions"
+                ),
+            ),
+            DataSourceOut(
+                name="Merchant Order Records",
+                format="CSV",
+                record_count=db.query(models.OrderRecord).count(),
+                description=(
+                    "Internal order management system records, including refund "
+                    "and fee data as tracked by the merchant"
+                ),
+            ),
+        ],
+        note=(
+            "Synthetic data generated to match real Razorpay settlement report and "
+            "bank statement formats — not a live API integration."
+        ),
+    )
 
 
 @app.get("/batches", response_model=List[BatchSummary])
