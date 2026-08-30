@@ -57,6 +57,15 @@ export default function BatchBridge() {
     setReasons((current) => ({ ...current, [exceptionId]: value }))
   }
 
+  async function refreshBatch() {
+    const [nextBatch, nextExceptions] = await Promise.all([
+      getBatch(id),
+      getBatchExceptions(id),
+    ])
+    setBatch(nextBatch)
+    setExceptions(nextExceptions)
+  }
+
   async function handleReview(exceptionId, decision, reason) {
     const name = approver.trim()
     if (!name || pendingId != null) return
@@ -71,19 +80,23 @@ export default function BatchBridge() {
         decision,
         reason: decision === 'rejected' ? String(reason).trim() : undefined,
       })
-      const [nextBatch, nextExceptions] = await Promise.all([
-        getBatch(id),
-        getBatchExceptions(id),
-      ])
-      setBatch(nextBatch)
-      setExceptions(nextExceptions)
+      await refreshBatch()
       setNotice({
         token: `${exceptionId}-${decision}-${Date.now()}`,
         kind: decision,
         classification: formatClassification(reviewed?.classification) || 'this exception',
       })
     } catch (err) {
-      setReviewError(err.message)
+      if (err.status === 409) {
+        setReviewError('This exception was already resolved')
+        try {
+          await refreshBatch()
+        } catch {
+          // Keep the already-resolved copy even if the refresh fails.
+        }
+      } else {
+        setReviewError(err.message)
+      }
     } finally {
       setPendingId(null)
     }

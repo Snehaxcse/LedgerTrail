@@ -452,6 +452,18 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
     if exc is None:
         raise HTTPException(status_code=404, detail=f"ExceptionRecord {exception_id} not found")
 
+    # Checked before writing anything, so a second call on an already-resolved
+    # exception (e.g. a double-click or a retried request) is rejected cleanly
+    # rather than silently creating a duplicate ApprovalLog/AuditEvent pair.
+    if exc.status != "open":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Exception {exception_id} is already {exc.status} — "
+                "cannot approve/reject an already-resolved exception."
+            ),
+        )
+
     reason = body.reason.strip() if body.reason else None
     if body.decision == "rejected" and not reason:
         raise HTTPException(status_code=400, detail="reason is required when decision is 'rejected'")

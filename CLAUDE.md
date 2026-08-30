@@ -70,31 +70,48 @@ API calls.)
 - "Wrong fee tier" exception = OrderRecord.fee_amount (expected) vs SettlementEntry.fee (actual) mismatch
 
 ## Current phase
-New Days 9-11 complete: Cross-Settlement Anomaly Detection built (app/anomaly_detection.py).
-Planted a real, verified scenario: batch 9's fee rate systemically drifted +20% across
-every order (each order's OrderRecord.fee_amount matches the drifted value, so no
-single-batch/per-order check catches it — bridge and match are both clean). Detection
-works by comparing each batch's fee_rate/refund_rate against a statistical baseline
-built from genuinely clean batches, using iterative self-consistency filtering to
-exclude outliers from the baseline itself (converges to batches {1,7,8,10}).
+Paused end of 30 Aug 2026 (late night). Frontend for the newest backend
+features is in and reviewed; New Day 12 hardening is NOT started.
 
-IMPORTANT LIMITATION, disclosed not hidden: refund_rate anomaly detection is
-DISABLED. Natural refund_rate variance across clean batches (22%-54% relative
-deviation) is too high, with too small a baseline sample (4 batches), to reliably
-tell real drift from noise -- and no planted ground-truth refund-drift case exists
-to verify against, unlike fee_rate's verified 20% case. Shipping only what's
-verified rather than an unverified guess. Revisit if baseline sample grows or a
-real test case gets planted.
+Frontend added / verified in this Cursor session (do not rebuild):
+- AI Explanation on each exception (on-demand Generate explanation)
+- Over time page at /trend (nav: Over time) — status dots, not a variance chart
+- Severity badge + All/High/Medium/Low/Info filter on the exception queue
+- View evidence drill-down: per-exception GET /batches/{id}/exceptions/{id}/evidence
+  — row tables for normal types; statistical comparison for SYSTEMIC_FEE_DRIFT /
+  SYSTEMIC_REFUND_DRIFT (this batch's rate vs baseline, “Z% higher/lower — N
+  stdevs”). Do not render settlement_entries tables for those two.
+- Simulated approve/reject toast (frontend only; dashed brass; “Simulated” large;
+  “No real notification sent”; auto-dismiss 6s)
+- GET /batches/{id}/exceptions list: non-list anomaly evidence coerced to [] so
+  Batch 09 can load (ExceptionOut still expects a list)
 
-Detection rule requires BOTH >2 standard deviations AND >10% relative deviation
-from baseline -- the stdev-only version produced false positives (batches 2/3
-flagged on fee_rate at ~0.6% relative deviation, purely because the clean baseline
-has near-zero natural variance, making any small absolute difference look
-statistically "significant"). The relative-deviation floor filters out this class
-of false positive while still catching real drift.
+Verified: Batch 09 Systemic Fee Drift evidence = 2.98% vs 2.47% baseline
+(batches 01, 07, 08, 10), 20.65% higher, 77.2 stdevs. Batch 02 Missing Refund
+evidence tables unchanged.
 
-Next: New Day 12 - hardening pass (edge cases, error handling audit, AI layer
-robustness). Then Day 13 accuracy write-up + deployment, Days 14-15 rehearsal.
+Do NOT auto-restart uvicorn. Claude Code kills port 8000 as part of its work;
+restarting it from Cursor fights that. Only start the API when the user asks.
+
+Do NOT click Approve/Reject on staged demo exceptions unless you will re-stage
+afterward (see demo staging note below).
+
+STILL PENDING from New Day 12's original scope (not started yet):
+- Malformed CSV/ingestion error handling (clean error messages vs raw tracebacks)
+- AI layer failure simulation (timeout/500/rate-limit -> graceful fallback, no hang)
+- Double-submission protection on POST /exceptions/{id}/approve
+- Missing/invalid ID handling (404s, not 500s) on batch/exception endpoints
+- Frontend checklist: empty severity filter state, double-click approve, narrow
+  browser width (especially the trend timeline), long AI explanation text wrapping
+
+Next: resume New Day 12's original hardening checklist above, then New Day 13
+(accuracy write-up + deployment), then New Days 14-15 (rehearsal).
+
+## How to run (when asked)
+- API: `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload`
+- UI: `cd frontend && npm run dev` → http://localhost:5173/
+- Reseed: `python scripts/ingest.py` then `python scripts/run_reconciliation.py`
+  (destroys demo staging — re-approve Missing Refund as Sneha afterward)
 
 
 ## Operational notes (learned the hard way — don't relearn these)
