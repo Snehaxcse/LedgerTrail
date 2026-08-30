@@ -19,12 +19,31 @@ from app import models
 
 logger = logging.getLogger("ledgertrail.matching")
 
+# These two values were picked for this synthetic dataset (rupee rounding noise,
+# and the largest deliberately-injected settlement/bank date gap being 2 days) --
+# not derived from any real payment gateway's actual behavior. A production
+# version would make both configurable per data source, since a different bank
+# or gateway could round differently or have a longer/shorter typical credit lag.
 AMOUNT_TOLERANCE = 1.00  # rupees, absorbs rounding
 DATE_WINDOW_DAYS = 3
 
 
 class AmbiguousMatchError(Exception):
     """Raised when a single BankTransaction is a valid candidate for more than one SettlementBatch."""
+
+
+def match_basis(match_type: Optional[str]) -> Optional[str]:
+    """Deterministic, human-readable restatement of match_type -- exists only so
+    confidence_score isn't mistaken for a statistical confidence interval (it's a
+    fixed heuristic weight: 1.0 exact, 0.85 fuzzy). No new decision is made here.
+    Single source of truth: computed once here (matching.py decides match_type in
+    the first place), written into Match/AuditEvent at creation time, and read
+    back everywhere else (app/main.py's API responses) rather than re-derived."""
+    if match_type == "exact":
+        return "exact same-day match"
+    if match_type == "fuzzy":
+        return "fuzzy match, date offset within tolerance"
+    return None
 
 
 @dataclass
@@ -69,6 +88,9 @@ def _reset_existing_matches(db: Session):
 
 def _log_match_created(db, batch_id, bank_transaction_id, confidence_score, match_type):
     # AuditEvent rows are append-only: never update or delete an AuditEvent once written.
+    # match_basis is computed once, here, at write time -- not re-derived by any reader
+    # (app/main.py imports this same function for its own API responses; the frontend
+    # reads the stored value rather than recomputing it).
     db.add(
         models.AuditEvent(
             timestamp=datetime.datetime.now(),
@@ -81,6 +103,7 @@ def _log_match_created(db, batch_id, bank_transaction_id, confidence_score, matc
                     "bank_transaction_id": bank_transaction_id,
                     "confidence_score": confidence_score,
                     "match_type": match_type,
+                    "match_basis": match_basis(match_type),
                 }
             ),
         )

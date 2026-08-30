@@ -53,10 +53,13 @@ export function describeAuditEvent(event, index) {
   const classification = context?.classification ?? after?.classification
 
   if (event.action === 'match_created') {
-    const type = after?.match_type
+    // match_basis is written server-side at match-creation time (see app/matching.py's
+    // match_basis()) -- older AuditEvent rows predate that field and won't have it, so
+    // this falls back to the bare match_type label rather than crashing or omitting detail.
+    const label = after?.match_basis || after?.match_type
     const percent = formatPercent(after?.confidence_score)
     const batch = formatBatchLabel(batchId)
-    if (batch && type && percent) return `Match created for ${batch} (${type}, ${percent})`
+    if (batch && label && percent) return `Match created for ${batch} (${label}, ${percent})`
     if (batch) return `Match created for ${batch}`
     return 'Match created'
   }

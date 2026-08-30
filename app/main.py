@@ -16,7 +16,7 @@ from typing import Any, List, Literal, Optional, Union
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app import bridge, models
@@ -24,6 +24,7 @@ from app.ai_explain import generate_explanation
 from app.anomaly_detection import ANOMALY_CLASSIFICATIONS
 from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
+from app.matching import match_basis as _match_basis
 from app.nl_query import answer_query
 from app.startup import run_startup_sequence
 
@@ -54,6 +55,14 @@ def _on_startup():
     run_startup_sequence()
 
 VARIANCE_TOLERANCE = bridge.VARIANCE_TOLERANCE
+
+# An assumption, not a measurement: how long a human would plausibly spend manually
+# finding+investigating ONE exception (locating the mismatched rows, cross-referencing
+# order/bank records) if this system didn't surface it automatically. Purely for a
+# labeled, honest ESTIMATE in GET /stats -- never presented as a measured/verified
+# figure, and deliberately excluded from anywhere numbers are treated as ground truth
+# (e.g. /transparency).
+TIME_SAVED_MINUTES_PER_EXCEPTION = 15.0
 
 GROUND_TRUTH_PATH = Path(__file__).resolve().parent.parent / "data" / "ground_truth.json"
 
@@ -112,7 +121,17 @@ class BatchSummary(BaseModel):
     total_net: float
     matched_bank_amount: Optional[float]
     match_type: Optional[str]
-    confidence_score: Optional[float]
+    confidence_score: Optional[float] = Field(
+        None,
+        description=(
+            "A deterministic heuristic weight (1.0 for an exact same-day match, 0.85 "
+            "for a fuzzy match within the date window) -- NOT a statistical confidence "
+            "interval or probability. See match_basis for the same rule in plain language."
+        ),
+    )
+    match_basis: Optional[str] = Field(
+        None, description="Plain-language restatement of match_type/confidence_score."
+    )
     is_reconciled: bool
     variance: Optional[float]
 
@@ -156,7 +175,11 @@ class AnomalyEvidenceOut(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    approver: str
+    approver: str = Field(
+        description="Client-supplied name, recorded as-is in ApprovalLog/AuditEvent. "
+        "There is no authentication behind this in this demo -- the caller can put "
+        "any string here. Treat it as a simulated operator identity, not a verified one."
+    )
     decision: Literal["approved", "rejected"]
     reason: Optional[str] = None
 
@@ -205,6 +228,27 @@ class TransparencySummary(BaseModel):
 class TransparencyResponse(BaseModel):
     planted_errors: List[PlantedErrorOut]
     summary: TransparencySummary
+
+
+class TimeSavedEstimate(BaseModel):
+    assumption: str
+    minutes_per_exception: float
+    total_exceptions: int
+    estimated_minutes_saved: float
+    estimated_hours_saved: float
+
+
+class StatsResponse(BaseModel):
+    total_batches: int
+    batches_reconciled_automatically: int = Field(
+        description="Batches with zero ExceptionRecord rows in the CURRENT classification "
+        "pass -- never needed a human decision at all."
+    )
+    batches_requiring_review: int = Field(
+        description="Batches with at least one ExceptionRecord row (any status: open, "
+        "approved, or rejected) in the CURRENT pass -- needed at least one human decision."
+    )
+    time_saved: TimeSavedEstimate
 
 
 class ExplainResponse(BaseModel):
@@ -283,6 +327,7 @@ def _batch_summary(db: Session, batch: models.SettlementBatch) -> BatchSummary:
         matched_bank_amount=bank_amount,
         match_type=match_row.match_type if match_row else None,
         confidence_score=match_row.confidence_score if match_row else None,
+        match_basis=_match_basis(match_row.match_type if match_row else None),
         is_reconciled=is_reconciled,
         variance=variance,
     )
@@ -471,6 +516,12 @@ def get_exception_evidence(batch_id: int, exception_id: int, db: Session = Depen
 
 @app.post("/exceptions/{exception_id}/approve", response_model=ApprovalResponse)
 def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = Depends(get_db)):
+    """SIMULATED OPERATOR IDENTITY: body.approver is an unauthenticated, client-supplied
+    string -- there is no login/session/token behind it, so anyone calling this endpoint
+    can claim to be anyone. It's recorded verbatim into ApprovalLog and AuditEvent as
+    that simulated identity, same as the frontend's own "Simulated" approve/reject
+    copy already tells the user. This is a demo-scope limitation, documented here
+    rather than fixed -- see ApprovalRequest.approver's own description too."""
     exc = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id == exception_id).first()
     if exc is None:
         raise HTTPException(status_code=404, detail=f"ExceptionRecord {exception_id} not found")
@@ -611,6 +662,45 @@ def get_transparency(db: Session = Depends(get_db)):
     )
 
     return TransparencyResponse(planted_errors=planted_errors_out, summary=summary)
+
+
+@app.get("/stats", response_model=StatsResponse)
+def get_stats(db: Session = Depends(get_db)):
+    """Rollup numbers for the current classification pass. "Reconciled automatically"
+    / "requires review" reflect ExceptionRecord rows as they stand RIGHT NOW (any
+    status) -- there's no accumulated history of past passes to check against, since
+    classify_exceptions/run_anomaly_detection wipe and recreate their own rows on
+    every run (see their docstrings). time_saved is a stated, labeled ESTIMATE built
+    from TIME_SAVED_MINUTES_PER_EXCEPTION, not a measurement -- see that constant's
+    comment for what it assumes and why."""
+    total_batches = db.query(models.SettlementBatch).count()
+
+    batch_ids_with_exceptions = {
+        row[0] for row in db.query(models.ExceptionRecord.batch_id).distinct().all()
+    }
+    batches_requiring_review = len(batch_ids_with_exceptions)
+    batches_reconciled_automatically = total_batches - batches_requiring_review
+
+    total_exceptions = db.query(models.ExceptionRecord).count()
+    estimated_minutes_saved = round(total_exceptions * TIME_SAVED_MINUTES_PER_EXCEPTION, 1)
+
+    return StatsResponse(
+        total_batches=total_batches,
+        batches_reconciled_automatically=batches_reconciled_automatically,
+        batches_requiring_review=batches_requiring_review,
+        time_saved=TimeSavedEstimate(
+            assumption=(
+                f"Assumes ~{TIME_SAVED_MINUTES_PER_EXCEPTION:.0f} minutes of manual "
+                "investigation avoided per exception the system surfaced automatically "
+                "(locating the mismatched rows, cross-referencing order/bank records) -- "
+                "an unverified estimate, not a measured figure."
+            ),
+            minutes_per_exception=TIME_SAVED_MINUTES_PER_EXCEPTION,
+            total_exceptions=total_exceptions,
+            estimated_minutes_saved=estimated_minutes_saved,
+            estimated_hours_saved=round(estimated_minutes_saved / 60, 2),
+        ),
+    )
 
 
 @app.get("/batches/{batch_id}/exceptions/{exception_id}/explain", response_model=ExplainResponse)
