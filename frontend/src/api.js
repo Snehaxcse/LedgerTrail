@@ -65,6 +65,10 @@ export function getStats() {
   return api('/stats')
 }
 
+export function getDataSources() {
+  return api('/data-sources')
+}
+
 export function getApprovers() {
   return api('/approvers')
 }
