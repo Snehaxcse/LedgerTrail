@@ -17,6 +17,7 @@ from typing import Any, List, Literal, Optional, Union
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app import bridge, models
@@ -724,22 +725,17 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
     are. It's recorded verbatim into ApprovalLog and AuditEvent as that simulated
     identity, same as the frontend's own "Simulated" approve/reject copy already
     tells the user. This is a demo-scope limitation, documented here rather than
-    fixed -- see ApprovalRequest.approver's own description too."""
+    fixed -- see ApprovalRequest.approver's own description too.
+
+    CONCURRENCY: the open->approved/rejected transition is a compare-and-set UPDATE
+    (below), not a read-then-write -- two genuinely simultaneous requests for the
+    same exception can both pass the 404/validation checks with a stale in-memory
+    view, but only one UPDATE can match status='open' at the database; the other
+    necessarily affects 0 rows once the first commits. This is what makes the 409
+    guard correct under real concurrency, not just under sequential double-clicks."""
     exc = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id == exception_id).first()
     if exc is None:
         raise HTTPException(status_code=404, detail=f"ExceptionRecord {exception_id} not found")
-
-    # Checked before writing anything, so a second call on an already-resolved
-    # exception (e.g. a double-click or a retried request) is rejected cleanly
-    # rather than silently creating a duplicate ApprovalLog/AuditEvent pair.
-    if exc.status != "open":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Exception {exception_id} is already {exc.status} — "
-                "cannot approve/reject an already-resolved exception."
-            ),
-        )
 
     if body.approver not in DEMO_APPROVERS:
         raise HTTPException(
@@ -754,12 +750,32 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
     if body.decision == "rejected" and not reason:
         raise HTTPException(status_code=400, detail="reason is required when decision is 'rejected'")
 
-    before_status = exc.status
-    exc.status = body.decision
+    # The single atomic statement that actually prevents a double-write: the WHERE
+    # clause is evaluated by the database against the row as it stands AT THAT
+    # MOMENT, not against exc.status read above -- rowcount is the only thing this
+    # function trusts to decide whether it won the race.
+    result = db.execute(
+        update(models.ExceptionRecord)
+        .where(models.ExceptionRecord.id == exception_id, models.ExceptionRecord.status == "open")
+        .values(status=body.decision)
+    )
+
+    if result.rowcount == 0:
+        db.rollback()
+        # A fresh read, purely for a human-readable message -- current status could
+        # differ from exc.status above if another request won the race in between.
+        current = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id == exception_id).first()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Exception {exception_id} is already {current.status} — "
+                "cannot approve/reject an already-resolved exception."
+            ),
+        )
 
     resulting_action = f"status set to '{body.decision}'"
     approval_log = models.ApprovalLog(
-        exception_id=exc.id,
+        exception_id=exception_id,
         approver=body.approver,
         decision=body.decision,
         reason=reason,
@@ -769,17 +785,19 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
     db.add(approval_log)
     db.flush()
 
-    # AuditEvent rows are append-only: never update or delete an AuditEvent once written.
+    # AuditEvent rows are append-only: never update or delete an AuditEvent once
+    # written. before_state is hardcoded "open" -- guaranteed by the UPDATE's own
+    # WHERE clause having just matched it, for this request specifically.
     db.add(
         models.AuditEvent(
             timestamp=datetime.datetime.now(),
             actor="human",
             action="exception_reviewed",
-            before_state=json.dumps({"exception_id": exc.id, "status": before_status}),
+            before_state=json.dumps({"exception_id": exception_id, "status": "open"}),
             after_state=json.dumps(
                 {
-                    "exception_id": exc.id,
-                    "status": exc.status,
+                    "exception_id": exception_id,
+                    "status": body.decision,
                     "approver": body.approver,
                     "decision": body.decision,
                     "reason": reason,
@@ -791,8 +809,8 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
     db.commit()
 
     return ApprovalResponse(
-        exception_id=exc.id,
-        status=exc.status,
+        exception_id=exception_id,
+        status=body.decision,
         approval_log_id=approval_log.id,
         reason=reason,
     )
