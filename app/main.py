@@ -25,6 +25,7 @@ from app.anomaly_detection import ANOMALY_CLASSIFICATIONS
 from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
 from app.matching import match_basis as _match_basis
+from app.narration_verification import verify_narration
 from app.nl_query import answer_query
 from app.startup import run_startup_sequence
 
@@ -222,6 +223,13 @@ class DataSourceOut(BaseModel):
 class DataSourcesResponse(BaseModel):
     sources: List[DataSourceOut]
     note: str
+
+
+class NarrationVerificationOut(BaseModel):
+    bank_transaction_id: int
+    is_settlement_credit: bool
+    confidence_note: str
+    source: Literal["ai_verified", "fallback"]
 
 
 class AuditEventOut(BaseModel):
@@ -442,6 +450,33 @@ def get_data_sources(db: Session = Depends(get_db)):
             "Synthetic data generated to match real Razorpay settlement report and "
             "bank statement formats — not a live API integration."
         ),
+    )
+
+
+@app.get("/bank-transactions/{bank_transaction_id}/verify-narration", response_model=NarrationVerificationOut)
+def verify_bank_transaction_narration(bank_transaction_id: int, db: Session = Depends(get_db)):
+    """AI verification is a read-only, on-demand check -- nothing here is cached or
+    persisted, and it never feeds back into matching/bridge/exception logic. See
+    app/narration_verification.py: the AI's YES/NO is cross-checked against a
+    deterministic keyword rule and discarded on disagreement, same as every other
+    AI feature in this codebase."""
+    txn = db.query(models.BankTransaction).filter(models.BankTransaction.id == bank_transaction_id).first()
+    if txn is None:
+        raise HTTPException(status_code=404, detail=f"BankTransaction {bank_transaction_id} not found")
+
+    result = verify_narration(
+        {
+            "description": txn.description,
+            "amount": txn.amount,
+            "date": txn.date.isoformat(),
+        }
+    )
+
+    return NarrationVerificationOut(
+        bank_transaction_id=txn.id,
+        is_settlement_credit=result.is_settlement_credit,
+        confidence_note=result.confidence_note,
+        source=result.source,
     )
 
 
