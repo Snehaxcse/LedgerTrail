@@ -51,6 +51,15 @@ NUMBER_RE = re.compile(r"[₹]?\s*\d[\d,]*(?:\.\d+)?")
 # "1. ", "2. " etc. at the start of a line -- markdown ordered-list markers, not amounts.
 LIST_MARKER_RE = re.compile(r"(?m)^\s*\d+\.\s+")
 
+# "(1)", "(2)", "(3)" etc. anywhere inline -- parenthetical enumeration markers
+# used in ordinary prose ("This could happen because: (1) ..., (2) ..., (3) ..."),
+# not amounts. Found live in an investigation report (app/investigation_agent.py)
+# that got wrongly flagged CONTRADICTED over "(3)" in an enumerated root-cause
+# explanation. Currency in every system prompt in this codebase is always written
+# "Rs.X"/"₹X", never a bare parenthesized number, so stripping small parenthesized
+# integers here removes a formatting artifact, never a real amount.
+INLINE_ENUM_MARKER_RE = re.compile(r"\(\d{1,2}\)")
+
 
 @dataclass
 class ExplanationResult:
@@ -132,9 +141,12 @@ def _collect_identifier_strings(evidence_data: Dict[str, Any]) -> Set[str]:
 
 def _extract_numbers(text: str) -> list:
     # Strip markdown ordered-list markers ("1. ", "2. " at the start of a line)
-    # before scanning for numbers -- otherwise list numbering reads as literal
-    # values (1.0, 2.0, ...), which is a formatting artifact, not a stated amount.
+    # and inline parenthetical enumeration markers ("(1)", "(2)" anywhere in the
+    # text) before scanning for numbers -- otherwise list/enumeration numbering
+    # reads as literal values (1.0, 2.0, ...), which is a formatting artifact,
+    # not a stated amount.
     text = LIST_MARKER_RE.sub("", text)
+    text = INLINE_ENUM_MARKER_RE.sub("", text)
 
     numbers = []
     for match in NUMBER_RE.finditer(text):

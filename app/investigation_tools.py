@@ -180,11 +180,18 @@ def get_exception_evidence(db: Session, exception_id: int) -> Optional[Dict[str,
     if exc.classification in ANOMALY_CLASSIFICATIONS:
         # Aggregate statistical finding -- the evidence IS the comparison
         # itself (fee_rate/refund_rate ratios), not resolved rows. Ratios are
-        # not currency; no paise_to_rupees() conversion applies here.
+        # not currency; no paise_to_rupees() conversion applies to `comparison`.
+        # unexplained_amount IS currency (converted) -- included here too, same
+        # as the record_references branch below, so an investigation of an
+        # anomaly classification has this authoritative figure available as
+        # grounded evidence rather than only being derivable by the agent
+        # doing its own rate x gross arithmetic (which the verifier correctly
+        # never trusts, by design -- see app/investigation_agent.py).
         return {
             "exception_id": exc.id,
             "classification": exc.classification,
             "evidence_type": "anomaly_comparison",
+            "unexplained_amount": paise_to_rupees(exc.unexplained_amount),
             "comparison": json.loads(exc.linked_evidence_ids) if exc.linked_evidence_ids else {},
         }
 
