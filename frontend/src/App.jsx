@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
+import AgentDemo from './pages/AgentDemo'
 import AuditTrail from './pages/AuditTrail'
 import BankStatement from './pages/BankStatement'
 import BatchBridge from './pages/BatchBridge'
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="/trend" element={<Trend />} />
           <Route path="/audit" element={<AuditTrail />} />
           <Route path="/transparency" element={<Transparency />} />
+          <Route path="/agent-demo" element={<AgentDemo />} />
         </Routes>
       </Layout>
     </BrowserRouter>

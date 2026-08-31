@@ -16,29 +16,33 @@ app.database.engine/SessionLocal, so the real ledgertrail.db is structurally
 unreachable from it, not just avoided by discipline. See that module's
 docstring and tests/test_holdout_evaluation.py.
 """
+import asyncio
 import datetime
 import json
 import logging
 from pathlib import Path
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import update
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
-from app import bridge, models
+from app import bridge, demo_cache, models
 from app.ai_explain import generate_explanation
 from app.anomaly_detection import ANOMALY_CLASSIFICATIONS
 from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
+from app.hero_case import build_hero_case_session
 from app.holdout_evaluation import run_holdout_evaluation
+from app.investigation_agent import investigate_exception, investigation_result_to_dict
 from app.matching import match_basis as _match_basis
 from app.money import paise_to_rupees
 from app.narration_verification import verify_narration
 from app.nl_query import answer_query
-from app.startup import run_startup_sequence
+from app.startup import run_investigation_prewarming, run_startup_sequence
 
 # Without this, "ledgertrail.ai_explain"'s path=ai_generated/path=fallback logs
 # (an explicit requirement, to track how often the fallback triggers) have no
@@ -63,8 +67,25 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def _on_startup():
+async def _on_startup():
+    """run_startup_sequence() is called synchronously (blocks the app from
+    accepting traffic, deliberately -- it's fast, a few seconds, and the
+    dashboard needs real data before it's worth serving at all). Investigation
+    pre-warming is then scheduled as a fire-and-forget background task via
+    run_in_threadpool (so the blocking Anthropic/DB calls run on a worker
+    thread, not the event loop) + asyncio.create_task (so this handler
+    returns, and the app starts accepting requests, without waiting for it).
+
+    This split exists because awaiting run_investigation_prewarming()
+    synchronously here was measured to make the ENTIRE app -- not just the
+    investigation endpoints -- unreachable for however long pre-warming
+    takes, which can be minutes in the worst case: a live GET /batches
+    issued while pre-warming was mid-flight got no response at all until
+    pre-warming finished. See CLAUDE.md's "AI Investigation Agent -- known
+    limitation and demo-reliability measure" and app/startup.py's module
+    docstring for the full writeup."""
     run_startup_sequence()
+    asyncio.create_task(run_in_threadpool(run_investigation_prewarming))
 
 VARIANCE_TOLERANCE = bridge.VARIANCE_TOLERANCE
 
@@ -349,6 +370,39 @@ class ExplainResponse(BaseModel):
     # call from one served out of the ai_explanation cache without changing what
     # `source` means. Flagging this since it wasn't explicitly requested.
     cached: bool
+
+
+class ToolCallOut(BaseModel):
+    tool: str
+    input: Dict[str, Any]
+    result: Any
+
+
+class InvestigationOut(BaseModel):
+    exception_id: int
+    investigation_status: Literal[
+        "VERIFIED_EXPLANATION", "PARTIALLY_VERIFIED", "INSUFFICIENT_EVIDENCE",
+        "CONTRADICTED", "HUMAN_REVIEW_REQUIRED",
+    ]
+    hypothesis: str
+    evidence_used: List[str]
+    tool_calls: List[ToolCallOut]
+    verified_facts: List[str]
+    unverified_claims: List[str]
+    contradictions: List[str]
+    possible_root_cause: Optional[str]
+    recommended_next_step: Optional[str]
+    confidence_basis: Optional[str]
+    requires_human_review: bool
+    ai_self_reported_status: Optional[str]
+    source: Literal["ai_investigated", "fallback"]
+    cached: bool
+
+
+class HeroCaseOut(BaseModel):
+    batch: BatchDetail
+    exceptions: List[ExceptionOut]
+    investigate_exception_id: int
 
 
 class QueryRequest(BaseModel):
@@ -1022,6 +1076,135 @@ def explain_exception(batch_id: int, exception_id: int, db: Session = Depends(ge
         db.commit()
 
     return ExplainResponse(exception_id=exc.id, explanation=result.text, source=result.source, cached=False)
+
+
+def _investigation_out(result, cached: bool) -> InvestigationOut:
+    """Converts app.investigation_agent.InvestigationResult (a plain dataclass)
+    into the API's InvestigationOut, via the same investigation_result_to_dict
+    shape app/startup.py's pre-warming uses to populate the cache this
+    endpoint reads -- so both always agree on exactly what a cached
+    investigation looks like. No paise_to_rupees() call here -- the agent's
+    own tool layer already converts every amount at ITS boundary (see
+    app/investigation_tools.py), so everything arriving here is already in
+    rupees."""
+    return InvestigationOut(**investigation_result_to_dict(result, cached))
+
+
+@app.get(
+    "/batches/{batch_id}/exceptions/{exception_id}/investigate",
+    response_model=InvestigationOut,
+)
+def investigate_exception_endpoint(batch_id: int, exception_id: int, db: Session = Depends(get_db)):
+    """On-demand only -- never runs automatically, same as /explain. Real
+    Anthropic tool-use investigation (app.investigation_agent), several calls
+    deep, so this is genuinely slow (seconds, not instant) -- cached in the DB
+    like ai_explanation, and for the same reason: only a genuine
+    source="ai_investigated" result is cached; a "fallback" (budget exhausted,
+    API error, malformed response) is never cached, so a transient failure
+    gets retried on the next click instead of being stuck permanently."""
+    _get_batch_or_404(db, batch_id)
+    exc = _get_exception_or_404(db, batch_id, exception_id)
+
+    if exc.investigation_result:
+        cached = InvestigationOut(**json.loads(exc.investigation_result))
+        cached.cached = True
+        return cached
+
+    result = investigate_exception(db, exception_id)
+    out = _investigation_out(result, cached=False)
+
+    if result.source == "ai_investigated":
+        exc.investigation_result = out.model_dump_json()
+        db.commit()
+
+    return out
+
+
+@app.get("/demo/hero-case", response_model=HeroCaseOut)
+def get_hero_case_demo():
+    """Context for the Phase D hero case -- batch, entries, and its exceptions
+    -- so the demo page can show what's being investigated before/alongside
+    the investigation itself. Same isolation as investigate_hero_case_demo
+    below: a fresh isolated database per call, never the real ledgertrail.db."""
+    db, batch_id, missing_refund_exception_id, timing_exception_id = build_hero_case_session()
+    try:
+        if missing_refund_exception_id is None:
+            raise HTTPException(status_code=500, detail="hero case did not produce the expected exception")
+
+        batch = db.query(models.SettlementBatch).filter(models.SettlementBatch.id == batch_id).first()
+        summary = _batch_summary(db, batch)
+        entries = (
+            db.query(models.SettlementEntry)
+            .filter(models.SettlementEntry.batch_id == batch_id)
+            .order_by(models.SettlementEntry.id)
+            .all()
+        )
+        batch_detail = BatchDetail(
+            **summary.model_dump(),
+            entries=[_settlement_entry_out(e) for e in entries],
+            bank_transaction=_bank_transaction_out(batch.bank_transaction) if batch.bank_transaction else None,
+        )
+
+        exception_rows = (
+            db.query(models.ExceptionRecord)
+            .filter(models.ExceptionRecord.batch_id == batch_id)
+            .order_by(models.ExceptionRecord.id)
+            .all()
+        )
+        exceptions_out = [
+            ExceptionOut(
+                id=e.id, batch_id=e.batch_id, classification=e.classification,
+                unexplained_amount=paise_to_rupees(e.unexplained_amount),
+                suggested_action=e.suggested_action, status=e.status,
+                requires_approval=CLASSIFICATION_INFO.get(e.classification, {}).get("requires_approval", False),
+                severity=e.severity, linked_evidence_ids=_list_evidence_ids(e.linked_evidence_ids),
+                approver=None, reason=None,
+            )
+            for e in exception_rows
+        ]
+
+        return HeroCaseOut(
+            batch=batch_detail, exceptions=exceptions_out,
+            investigate_exception_id=missing_refund_exception_id,
+        )
+    finally:
+        db.close()
+
+
+@app.get("/demo/hero-case/investigate", response_model=InvestigationOut)
+def investigate_hero_case_demo():
+    """Phase D's hero case, demoed here rather than added to the primary
+    dataset (which would have meant either accepting it as an 8th case in
+    /transparency's carefully-verified 7/7 ground truth, or inventing a
+    ground-truth entry for a case that isn't part of that dataset's actual
+    purpose -- see app/hero_case.py's docstring). Builds a fresh isolated
+    in-memory database on every call (same isolation discipline as
+    /evaluation/held-out): never touches the real ledgertrail.db.
+
+    Cache is app.demo_cache.hero_case_investigation, not a local module
+    global here -- app/startup.py pre-warms it at boot (see CLAUDE.md's "AI
+    Investigation Agent -- known limitation and demo-reliability measure"),
+    and this endpoint is only responsible for reading it and falling back to
+    a live call if it's still empty (e.g. pre-warming was skipped or
+    failed). This fallback path -- one live investigate_exception() call,
+    cached only on a genuine ai_investigated success, never a fallback -- is
+    completely unchanged from before pre-warming existed."""
+    if demo_cache.hero_case_investigation is not None:
+        cached = InvestigationOut(**demo_cache.hero_case_investigation)
+        cached.cached = True
+        return cached
+
+    db, batch_id, missing_refund_exception_id, timing_exception_id = build_hero_case_session()
+    try:
+        if missing_refund_exception_id is None:
+            raise HTTPException(status_code=500, detail="hero case did not produce the expected exception")
+        result = investigate_exception(db, missing_refund_exception_id)
+        out = _investigation_out(result, cached=False)
+        if result.source == "ai_investigated":
+            demo_cache.hero_case_investigation = investigation_result_to_dict(result, cached=False)
+        return out
+    finally:
+        db.close()
 
 
 @app.post("/query", response_model=QueryResponse)

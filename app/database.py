@@ -24,6 +24,8 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE exceptions ADD COLUMN ai_explanation TEXT"))
         if cols and "severity" not in col_names:
             conn.execute(text("ALTER TABLE exceptions ADD COLUMN severity VARCHAR"))
+        if cols and "investigation_result" not in col_names:
+            conn.execute(text("ALTER TABLE exceptions ADD COLUMN investigation_result TEXT"))
 
 
 def get_db():

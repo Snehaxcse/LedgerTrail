@@ -42,6 +42,9 @@ export default function Layout({ children }) {
             <NavLink to="/transparency" className={navClass}>
               Transparency
             </NavLink>
+            <NavLink to="/agent-demo" className={navClass}>
+              Agent demo
+            </NavLink>
             <NavLink to="/audit" className={navClass}>
               Audit trail
             </NavLink>

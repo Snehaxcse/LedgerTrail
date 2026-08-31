@@ -133,3 +133,46 @@ project. Any future tool added to investigation_tools.py that echoes back an inp
 value must be excluded from evidence-harvesting for that value, or the verifier can
 be tricked into certifying AI-computed arithmetic as "grounded." Check this
 explicitly for any NEW comparison/verification tool added in future phases.
+
+## AI Investigation Agent — known limitation and demo-reliability measure
+Haiku's tool-call output has a measured 50-75% per-attempt malformed-shape rate
+on multi-tool investigations (a list-typed report field -- verified_facts,
+unverified_claims, or contradictions -- serialized as a bare string instead of a
+JSON array; see app/investigation_agent.py's is_malformed_shape_result docstring
+for the full measurement and the diagnostic that ruled out conversation length as
+the cause). We pre-warm the demo cache at boot to ensure visitors see a
+representative result rather than being exposed to this live failure rate on
+first click. This is a disclosed demo-reliability measure, not a change to the
+system's actual behavior or a concealment of the underlying limitation.
+
+Concretely: investigate_exception() itself already does one bounded internal
+retry on a malformed first attempt (unchanged live behavior for any fresh,
+uncached call, including after this pre-warming was added). On top of that,
+app/startup.py's run_investigation_prewarming() pre-runs the two demo
+investigations that are actually shown by default -- the adversarial case (the
+SYSTEMIC_FEE_DRIFT exception) and the hero case -- up to 5 bounded attempts
+each, accepting whatever the final attempt produces if none land clean (never
+an unbounded loop), and logs clearly which attempt succeeded. The adversarial
+case caches into the real ExceptionRecord.investigation_result DB column (the
+same column a live click would populate); the hero case caches into the
+in-memory app/demo_cache.py module, since it has no persistent exception row to
+key a DB cache against.
+
+IMPORTANT (found and fixed the same day this was built): run_investigation_
+prewarming() is NOT called from run_startup_sequence() and is NOT awaited by
+FastAPI's startup event -- it runs as a background task, scheduled AFTER the
+app has already started accepting requests. This was a real, measured bug in
+the first version: awaiting live LLM calls synchronously inside the startup
+event made the ENTIRE app -- not just the investigation endpoints, the
+dashboard and every other route too -- unreachable for however long
+pre-warming took, up to several minutes in the worst case (confirmed live: a
+GET /batches issued while pre-warming was mid-flight got no response at all
+until pre-warming finished). Fixed in app/main.py's startup handler via
+starlette's run_in_threadpool (runs the blocking calls on a worker thread, not
+the event loop) wrapped in asyncio.create_task (fire-and-forget, so the
+handler returns immediately). Until the background task finishes, both
+investigation endpoints simply fall back to their normal live, uncached call
+-- exactly the same behavior as before pre-warming existed, just for a short
+window at boot instead of permanently. Pre-warming failing entirely (e.g.
+ANTHROPIC_API_KEY not configured) degrades the same way, indefinitely rather
+than just briefly.

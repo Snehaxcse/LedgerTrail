@@ -85,6 +85,18 @@ export function getApprovers() {
   return api('/approvers')
 }
 
+export function investigateException(batchId, exceptionId) {
+  return api(`/batches/${batchId}/exceptions/${exceptionId}/investigate`)
+}
+
+export function getHeroCase() {
+  return api('/demo/hero-case')
+}
+
+export function investigateHeroCase() {
+  return api('/demo/hero-case/investigate')
+}
+
 export async function getExceptionIndex() {
   const batches = await getBatches()
   const lists = await Promise.all(batches.map((batch) => getBatchExceptions(batch.id)))

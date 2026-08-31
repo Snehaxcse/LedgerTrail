@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Amount from './Amount'
 import AiExplanation from './AiExplanation'
 import EvidencePanel from './EvidencePanel'
+import InvestigationTrace from './InvestigationTrace'
 import { getApprovers } from '../api'
 import { formatClassification } from '../lib/format'
 
@@ -247,6 +248,7 @@ export default function ExceptionQueue({
                   classification={row.classification}
                 />
                 <AiExplanation batchId={batchId} exceptionId={row.id} />
+                <InvestigationTrace batchId={batchId} exceptionId={row.id} />
               </li>
             )
           })}

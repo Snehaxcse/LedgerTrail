@@ -327,6 +327,34 @@ class InvestigationResult:
     source: str = "ai_investigated"  # "ai_investigated" | "fallback"
 
 
+def investigation_result_to_dict(result: InvestigationResult, cached: bool) -> Dict[str, Any]:
+    """The single shared shape for caching an InvestigationResult as JSON --
+    used by app/main.py's InvestigationOut (real per-exception DB-column
+    cache) AND app/startup.py's boot-time pre-warming (same DB column, plus
+    the hero case's in-memory app.demo_cache), so both always agree on
+    exactly what a cached investigation looks like. Keys match
+    InvestigationOut's fields field-for-field; kept as a plain dict (not the
+    Pydantic model itself) so this module never needs to import from
+    app.main (which imports this module) or depend on Pydantic at all."""
+    return {
+        "exception_id": result.exception_id,
+        "investigation_status": result.investigation_status,
+        "hypothesis": result.hypothesis,
+        "evidence_used": result.evidence_used,
+        "tool_calls": result.tool_calls,
+        "verified_facts": result.verified_facts,
+        "unverified_claims": result.unverified_claims,
+        "contradictions": result.contradictions,
+        "possible_root_cause": result.possible_root_cause,
+        "recommended_next_step": result.recommended_next_step,
+        "confidence_basis": result.confidence_basis,
+        "requires_human_review": result.requires_human_review,
+        "ai_self_reported_status": result.ai_self_reported_status,
+        "source": result.source,
+        "cached": cached,
+    }
+
+
 def _fallback_result(
     exception_id: int, reason: str, tool_call_log: Optional[List[ToolCallRecord]] = None
 ) -> InvestigationResult:
@@ -635,40 +663,52 @@ def _dispatch_tool(db, name: str, tool_input: Dict[str, Any]) -> Any:
     raise ValueError(f"unknown tool: {name}")
 
 
-def investigate_exception(db, exception_id: int) -> InvestigationResult:
-    exc = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id == exception_id).first()
-    if exc is None:
-        return _fallback_result(exception_id, "exception_not_found")
+def is_malformed_shape_result(result: InvestigationResult) -> bool:
+    """True only for the specific, narrow failure the retry exists to paper
+    over -- the model serialized a list-typed report field as a bare string
+    (see _verify_investigation_result's docstring). Not underscore-prefixed:
+    used both by investigate_exception's own single retry below AND by
+    app/startup.py's boot-time demo pre-warming, which needs the identical
+    check to decide whether to try again.
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return _fallback_result(exception_id, "no_api_key")
-
-    starting_facts = {
-        "exception_id": exc.id,
-        "batch_id": exc.batch_id,
-        "classification": exc.classification,
-        "unexplained_amount": paise_to_rupees(exc.unexplained_amount),
-        "status": exc.status,
-        "suggested_action": exc.suggested_action,
-    }
-    user_message = (
-        f"Investigate exception #{exc.id} on batch #{exc.batch_id}.\n"
-        f"Classification: {exc.classification}\n"
-        f"Unexplained amount: Rs.{starting_facts['unexplained_amount']}\n"
-        f"Current status: {exc.status}\n"
-        "Use the available tools to gather whatever evidence is genuinely relevant, "
-        "then call submit_investigation_report to conclude."
+    DISCLOSED, MEASURED LIMITATION -- not a wiring bug, not something we can
+    fix by changing our own code: a 20-run direct tally against a real case
+    found ~50% of raw model calls hit this, independent of HTTP/Pydantic/
+    caching. A follow-up 15-run diagnostic (capturing the actual raw
+    malformed field content, not just its type) found: (1) it does NOT
+    correlate with longer tool-use conversations -- malformed attempts
+    averaged FEWER tool calls than clean ones (4.18 vs 5.00), so this is not
+    "the model loses formatting discipline over a long session"; (2) it is
+    not tied to any specific preceding tool call -- it's always the final
+    submit_investigation_report call's array-typed parameters; (3) the
+    content is consistently coherent and correctly list-shaped, just
+    serialized wrong -- in several captured examples the malformed string
+    contained literal leaked fragments like "<item>...</item>" and even a
+    stray "</unverified_claims>" / "<parameter name=\"contradictions\">",
+    consistent with Claude's internal XML-tagged tool-argument drafting
+    occasionally failing to convert cleanly into a JSON array. See
+    CLAUDE.md's "AI Investigation Agent -- known limitation and
+    demo-reliability measure" section for how this is disclosed and handled
+    (a bounded pre-warm at boot, not a fix to the underlying rate).
+    Every other failure/abstention path (no_api_key, api_error,
+    tool_call_budget_exhausted, a genuine CONTRADICTED/INSUFFICIENT_EVIDENCE
+    verdict, ...) is excluded on purpose: retrying those would not plausibly
+    change the outcome, so only this one shape defect gets retried."""
+    return result.source == "ai_investigated" and any(
+        c.startswith("Investigation report malformed:") for c in result.contradictions
     )
 
+
+def _run_investigation_attempt(
+    db, client: "anthropic.Anthropic", exc, exception_id: int, user_message: str
+) -> InvestigationResult:
+    """One full, independent investigation attempt: fresh message history,
+    fresh tool-call log. Extracted so investigate_exception can re-issue the
+    exact same request a second time on a malformed-shape failure without
+    carrying over any state (including the bad first response) that might
+    bias the retry."""
     messages = [{"role": "user", "content": user_message}]
     tool_call_log: List[ToolCallRecord] = []
-
-    try:
-        client = anthropic.Anthropic(api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS)
-    except Exception:
-        logger.exception("path=fallback reason=client_init_error exception_id=%s", exception_id)
-        return _fallback_result(exception_id, "client_init_error")
 
     for turn in range(MAX_TOOL_CALLS + 1):
         try:
@@ -740,3 +780,51 @@ def investigate_exception(db, exception_id: int) -> InvestigationResult:
         messages.append({"role": "user", "content": tool_results})
 
     return _fallback_result(exception_id, "tool_call_budget_exhausted", tool_call_log)
+
+
+def investigate_exception(db, exception_id: int) -> InvestigationResult:
+    exc = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id == exception_id).first()
+    if exc is None:
+        return _fallback_result(exception_id, "exception_not_found")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return _fallback_result(exception_id, "no_api_key")
+
+    starting_facts = {
+        "exception_id": exc.id,
+        "batch_id": exc.batch_id,
+        "classification": exc.classification,
+        "unexplained_amount": paise_to_rupees(exc.unexplained_amount),
+        "status": exc.status,
+        "suggested_action": exc.suggested_action,
+    }
+    user_message = (
+        f"Investigate exception #{exc.id} on batch #{exc.batch_id}.\n"
+        f"Classification: {exc.classification}\n"
+        f"Unexplained amount: Rs.{starting_facts['unexplained_amount']}\n"
+        f"Current status: {exc.status}\n"
+        "Use the available tools to gather whatever evidence is genuinely relevant, "
+        "then call submit_investigation_report to conclude."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS)
+    except Exception:
+        logger.exception("path=fallback reason=client_init_error exception_id=%s", exception_id)
+        return _fallback_result(exception_id, "client_init_error")
+
+    result = _run_investigation_attempt(db, client, exc, exception_id, user_message)
+
+    if is_malformed_shape_result(result):
+        # Bounded, one-time-only retry: re-issue the exact same request from
+        # scratch (fresh messages, fresh tool_call_log -- the first attempt's
+        # bad output is not carried forward). If the retry is clean, use it.
+        # If the retry ALSO comes back malformed, fall through and return it
+        # anyway -- no third attempt, and no change to what the verifier
+        # itself accepts or rejects; this only changes how many times the
+        # model gets asked before the existing safety fallback is the answer.
+        logger.warning("path=retry reason=malformed_shape_first_attempt exception_id=%s", exception_id)
+        result = _run_investigation_attempt(db, client, exc, exception_id, user_message)
+
+    return result
