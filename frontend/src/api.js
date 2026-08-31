@@ -97,6 +97,40 @@ export function investigateHeroCase() {
   return api('/demo/hero-case/investigate')
 }
 
+export function runHoldoutIdempotencyCheck() {
+  return api('/demo/holdout-sandbox/idempotency-check', { method: 'POST' })
+}
+
+export function startHoldoutReconciliationSandbox() {
+  return api('/demo/holdout-sandbox/reconciliation/start', { method: 'POST' })
+}
+
+export function runHoldoutSandboxMatch(sandboxId) {
+  return api(`/demo/holdout-sandbox/reconciliation/${sandboxId}/match`, { method: 'POST' })
+}
+
+export function runHoldoutSandboxBridge(sandboxId) {
+  return api(`/demo/holdout-sandbox/reconciliation/${sandboxId}/bridge`, { method: 'POST' })
+}
+
+export function runHoldoutSandboxClassify(sandboxId) {
+  return api(`/demo/holdout-sandbox/reconciliation/${sandboxId}/classify`, { method: 'POST' })
+}
+
+export function startHoldoutApprovalSandbox() {
+  return api('/demo/holdout-sandbox/approval/start', { method: 'POST' })
+}
+
+export function approveHoldoutSandboxException(sandboxId, { exceptionId, approver, decision, reason }) {
+  const body = { exception_id: exceptionId, approver, decision }
+  if (reason != null && reason !== '') body.reason = reason
+  return api(`/demo/holdout-sandbox/approval/${sandboxId}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 export async function getExceptionIndex() {
   const batches = await getBatches()
   const lists = await Promise.all(batches.map((batch) => getBatchExceptions(batch.id)))

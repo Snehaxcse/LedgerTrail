@@ -111,3 +111,21 @@ class AuditEvent(Base):
     action = Column(String, nullable=False)
     before_state = Column(Text, nullable=True)  # JSON-encoded snapshot
     after_state = Column(Text, nullable=True)  # JSON-encoded snapshot
+
+
+class HeldOutIngestionRecord(Base):
+    """Idempotency tracking for the held-out sandbox's replay demo
+    (app/holdout_sandbox.py) -- NOT part of the primary reconciliation
+    pipeline and never populated on the real ledgertrail.db (nothing in
+    app/startup.py or scripts/ingest.py ever inserts into this table; the
+    table exists there only because Base.metadata.create_all() creates every
+    model's table on every engine, primary included). The unique constraint
+    on source_event_id is what makes the idempotency demo real: a second
+    ingestion attempt with the same source_event_id fails at the database
+    level (IntegrityError), not via an application-code "does this already
+    exist" check that a caller could bypass."""
+    __tablename__ = "holdout_ingestion_records"
+
+    id = Column(Integer, primary_key=True)
+    source_event_id = Column(String, nullable=False, unique=True)
+    ingested_at = Column(DateTime, nullable=False)

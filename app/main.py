@@ -37,6 +37,16 @@ from app.database import get_db, ensure_schema
 from app.exceptions import CLASSIFICATION_INFO
 from app.hero_case import build_hero_case_session
 from app.holdout_evaluation import run_holdout_evaluation
+from app.holdout_sandbox import (
+    build_approval_demo_sandbox,
+    create_sandbox,
+    get_sandbox_session,
+    run_bridge_step,
+    run_classification_step,
+    run_idempotency_check,
+    run_matching_step,
+    seed_raw_records,
+)
 from app.investigation_agent import investigate_exception, investigation_result_to_dict
 from app.matching import match_basis as _match_basis
 from app.money import paise_to_rupees
@@ -338,6 +348,58 @@ class HeldOutEvaluationOut(BaseModel):
     metrics: HeldOutMetricsOut
     cases: List[HeldOutCaseOut]
     dataset_note: str
+
+
+class IngestionPassOut(BaseModel):
+    records_seen: int
+    accepted: int
+    duplicates: int
+
+
+class IdempotencyCheckOut(BaseModel):
+    first_ingestion: IngestionPassOut
+    second_ingestion: IngestionPassOut
+    idempotent: bool
+
+
+class SandboxStartOut(BaseModel):
+    sandbox_id: str
+    records_loaded: int
+
+
+class SandboxMatchOut(BaseModel):
+    matched_count: int
+    ambiguous_excluded: int
+
+
+class SandboxBridgeOut(BaseModel):
+    bridges_calculated: int
+
+
+class SandboxClassifyOut(BaseModel):
+    total_exceptions: int
+    duplicates_detected: int
+    requires_review: int
+
+
+class SandboxApprovalExceptionOut(BaseModel):
+    id: int
+    classification: str
+    unexplained_amount: float
+    status: str
+    batch_label: Optional[str]
+
+
+class SandboxApprovalStartOut(BaseModel):
+    sandbox_id: str
+    exception: Optional[SandboxApprovalExceptionOut]
+
+
+class SandboxApproveRequest(BaseModel):
+    exception_id: int
+    approver: str
+    decision: Literal["approved", "rejected"]
+    reason: Optional[str] = None
 
 
 class TimeSavedEstimate(BaseModel):
@@ -826,9 +888,15 @@ def get_exception_evidence(batch_id: int, exception_id: int, db: Session = Depen
     return _resolve_evidence(db, entry_ids, order_ids, bank_ids)
 
 
-@app.post("/exceptions/{exception_id}/approve", response_model=ApprovalResponse)
-def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = Depends(get_db)):
-    """SIMULATED OPERATOR IDENTITY: body.approver must be one of the fixed names in
+def _approve_exception_core(db: Session, exception_id: int, body: ApprovalRequest) -> ApprovalResponse:
+    """The actual compare-and-set approval logic -- extracted so both the
+    real POST /exceptions/{id}/approve endpoint AND the held-out sandbox's
+    approval-race demo (app/holdout_sandbox.py) call the IDENTICAL
+    mechanism. Never a reimplementation that could silently drift from what
+    the real endpoint does: the demo is only meaningful proof if it's
+    provably running the same code, not a lookalike.
+
+    SIMULATED OPERATOR IDENTITY: body.approver must be one of the fixed names in
     DEMO_APPROVERS (validated below) -- there is still no login/session/token behind
     it, so this only proves the caller picked a name off a list, not who they actually
     are. It's recorded verbatim into ApprovalLog and AuditEvent as that simulated
@@ -874,13 +942,23 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
         # A fresh read, purely for a human-readable message -- current status could
         # differ from exc.status above if another request won the race in between.
         current = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id == exception_id).first()
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Exception {exception_id} is already {current.status} — "
-                "cannot approve/reject an already-resolved exception."
-            ),
+        # last_log gives the 409 a concrete "who already decided this" answer
+        # (e.g. "Current state: APPROVED BY SNEHA") instead of just a status
+        # word -- a genuine improvement for this endpoint's own callers, not
+        # something added only for the sandbox demo.
+        last_log = (
+            db.query(models.ApprovalLog)
+            .filter(models.ApprovalLog.exception_id == exception_id)
+            .order_by(models.ApprovalLog.id.desc())
+            .first()
         )
+        detail = (
+            f"Exception {exception_id} is already {current.status} — "
+            "cannot approve/reject an already-resolved exception."
+        )
+        if last_log is not None:
+            detail += f" Current state: {current.status.upper()} BY {last_log.approver.upper()}."
+        raise HTTPException(status_code=409, detail=detail)
 
     resulting_action = f"status set to '{body.decision}'"
     approval_log = models.ApprovalLog(
@@ -923,6 +1001,11 @@ def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = De
         approval_log_id=approval_log.id,
         reason=reason,
     )
+
+
+@app.post("/exceptions/{exception_id}/approve", response_model=ApprovalResponse)
+def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = Depends(get_db)):
+    return _approve_exception_core(db, exception_id, body)
 
 
 @app.get("/audit-trail", response_model=AuditTrailResponse)
@@ -1018,6 +1101,118 @@ def get_held_out_evaluation():
         cases=[HeldOutCaseOut(**c.__dict__) for c in result.cases],
         dataset_note=result.dataset_note,
     )
+
+
+@app.post("/demo/holdout-sandbox/idempotency-check", response_model=IdempotencyCheckOut)
+def holdout_idempotency_check():
+    """Builds one fresh isolated in-memory database (app.holdout_sandbox,
+    same isolation discipline as /evaluation/held-out -- never touches
+    ledgertrail.db) and ingests the held-out dataset's 14 batches into it
+    twice. The second pass's duplicate count comes from a real UNIQUE
+    constraint violation on HeldOutIngestionRecord.source_event_id
+    (app/models.py), caught as an actual IntegrityError -- not an
+    application-code "does this exist already" check a caller could bypass
+    by calling the ingestion function a different way."""
+    result = run_idempotency_check()
+    return IdempotencyCheckOut(
+        first_ingestion=IngestionPassOut(**result["first_ingestion"].__dict__),
+        second_ingestion=IngestionPassOut(**result["second_ingestion"].__dict__),
+        idempotent=result["idempotent"],
+    )
+
+
+@app.post("/demo/holdout-sandbox/reconciliation/start", response_model=SandboxStartOut)
+def holdout_sandbox_start():
+    """Step 1 of the live reconciliation-progress demo: creates a fresh
+    isolated sandbox and loads the held-out dataset's raw records into it --
+    no matching/bridge/classification yet. Returns a sandbox_id the frontend
+    passes to each subsequent step so they all operate on the SAME database,
+    across separate HTTP requests (see app/holdout_sandbox.py's module
+    docstring for why that needs its own registry, distinct from
+    /evaluation/held-out's stateless one-call-one-database pattern)."""
+    sandbox_id = create_sandbox()
+    db = get_sandbox_session(sandbox_id)
+    try:
+        records_loaded = seed_raw_records(db, sandbox_id)
+    finally:
+        db.close()
+    return SandboxStartOut(sandbox_id=sandbox_id, records_loaded=records_loaded)
+
+
+@app.post("/demo/holdout-sandbox/reconciliation/{sandbox_id}/match", response_model=SandboxMatchOut)
+def holdout_sandbox_match(sandbox_id: str):
+    """Step 2: the real matching.run_matching(), unmodified, against this
+    sandbox's own database."""
+    db = get_sandbox_session(sandbox_id)
+    if db is None:
+        raise HTTPException(status_code=404, detail="Sandbox not found or expired.")
+    try:
+        result = run_matching_step(db, sandbox_id)
+    finally:
+        db.close()
+    return SandboxMatchOut(**result)
+
+
+@app.post("/demo/holdout-sandbox/reconciliation/{sandbox_id}/bridge", response_model=SandboxBridgeOut)
+def holdout_sandbox_bridge(sandbox_id: str):
+    """Step 3: the real bridge.compute_bridge(), unmodified."""
+    db = get_sandbox_session(sandbox_id)
+    if db is None:
+        raise HTTPException(status_code=404, detail="Sandbox not found or expired.")
+    try:
+        result = run_bridge_step(db)
+    finally:
+        db.close()
+    return SandboxBridgeOut(**result)
+
+
+@app.post("/demo/holdout-sandbox/reconciliation/{sandbox_id}/classify", response_model=SandboxClassifyOut)
+def holdout_sandbox_classify(sandbox_id: str):
+    """Step 4: the real exceptions.classify_exceptions() and
+    anomaly_detection.run_anomaly_detection(), unmodified. Duplicate count
+    and requires-review count are both sub-facts of this one step's result,
+    not separately-run computations -- see run_classification_step's
+    docstring for why they're still reported as distinct checkmarks."""
+    db = get_sandbox_session(sandbox_id)
+    if db is None:
+        raise HTTPException(status_code=404, detail="Sandbox not found or expired.")
+    try:
+        result = run_classification_step(db)
+    finally:
+        db.close()
+    return SandboxClassifyOut(**result)
+
+
+@app.post("/demo/holdout-sandbox/approval/start", response_model=SandboxApprovalStartOut)
+def holdout_sandbox_approval_start():
+    """Seeds a sandbox with the full held-out pipeline (matching -> bridge ->
+    classification) and picks one throwaway exception that genuinely
+    requires approval, for the duplicate-approval race demo. A real
+    ExceptionRecord in an isolated database -- never a primary-dataset row,
+    never ledgertrail.db."""
+    result = build_approval_demo_sandbox()
+    exc = result["exception"]
+    return SandboxApprovalStartOut(
+        sandbox_id=result["sandbox_id"],
+        exception=SandboxApprovalExceptionOut(**exc) if exc else None,
+    )
+
+
+@app.post("/demo/holdout-sandbox/approval/{sandbox_id}/approve", response_model=ApprovalResponse)
+def holdout_sandbox_approve(sandbox_id: str, body: SandboxApproveRequest):
+    """Calls _approve_exception_core -- the exact same compare-and-set logic
+    the real POST /exceptions/{id}/approve uses -- against this sandbox's
+    database. Approving the same exception twice (as different approvers)
+    produces the real 409, including the real "Current state: X BY Y" detail
+    pulled from this sandbox's own ApprovalLog, not a scripted message."""
+    db = get_sandbox_session(sandbox_id)
+    if db is None:
+        raise HTTPException(status_code=404, detail="Sandbox not found or expired.")
+    try:
+        approval_body = ApprovalRequest(approver=body.approver, decision=body.decision, reason=body.reason)
+        return _approve_exception_core(db, body.exception_id, approval_body)
+    finally:
+        db.close()
 
 
 @app.get("/stats", response_model=StatsResponse)

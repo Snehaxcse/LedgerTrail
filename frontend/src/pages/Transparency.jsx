@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { getStats, getTransparency } from '../api'
+import ApprovalRaceDemo from '../components/ApprovalRaceDemo'
 import HeldOutEvaluation from '../components/HeldOutEvaluation'
+import IdempotencyDemo from '../components/IdempotencyDemo'
 import MetricsStrip from '../components/MetricsStrip'
+import ReconciliationProgressDemo from '../components/ReconciliationProgressDemo'
 import { formatClassification, formatInr } from '../lib/format'
 
 function formatValue(value) {
@@ -163,6 +166,20 @@ export default function Transparency() {
       ) : null}
 
       <HeldOutEvaluation />
+
+      <div className="mt-10">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brass">
+          Live sandbox demonstrations
+        </p>
+        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
+          Three interactive checks, all running against the held-out evaluation engine's own
+          isolated, in-memory database above — never the primary batches shown elsewhere in this
+          app.
+        </p>
+        <IdempotencyDemo />
+        <ReconciliationProgressDemo />
+        <ApprovalRaceDemo />
+      </div>
     </div>
   )
 }
