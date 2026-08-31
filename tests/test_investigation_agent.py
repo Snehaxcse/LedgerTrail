@@ -232,6 +232,54 @@ def test_self_counted_total_is_still_rejected_even_though_numerically_correct():
     assert result["investigation_status"] == "CONTRADICTED"
 
 
+def test_grounded_self_reported_contradiction_does_not_force_contradicted():
+    """Regression test for a real, observed false positive: the AI used the
+    contradictions field to honestly describe the exception's own nature
+    (settlement shows a refund the order record doesn't) -- every number in
+    that claim was grounded, nothing was fabricated. This must read as
+    PARTIALLY_VERIFIED (a real, disclosed open question), not CONTRADICTED --
+    CONTRADICTED should mean the verifier caught a fabrication, not "the AI
+    used the word contradiction to describe the finding itself"."""
+    log = _log(
+        ("get_settlement_entries", {"batch_id": 1}, [{"order_ref": "HERO-01", "refund": 3472.5}]),
+        ("get_order", {"order_ref": "HERO-01"}, {"order_ref": "HERO-01", "refund_amount": 0.0}),
+    )
+    raw = {
+        "hypothesis": "ok",
+        "verified_facts": [
+            "Settlement entry for HERO-01 shows refund of Rs.3472.5.",
+            "Order record for HERO-01 shows refund_amount of 0.0.",
+        ],
+        "unverified_claims": [],
+        "contradictions": [
+            "Settlement shows a refund of Rs.3472.5 for HERO-01, but the order record shows 0.0 -- these disagree."
+        ],
+        "possible_root_cause": "", "recommended_next_step": "", "confidence_basis": "",
+        "investigation_status": "VERIFIED_EXPLANATION", "requires_human_review": False,
+    }
+    result = _verify_investigation_result(raw, log, classification="MISSING_REFUND_RECORD")
+    assert len(result["verified_facts"]) == 2
+    assert result["investigation_status"] == "PARTIALLY_VERIFIED"
+    assert "[REJECTED BY VERIFIER" not in result["contradictions"][0]
+
+
+def test_ungrounded_self_reported_contradiction_still_rejected():
+    """The other half of the same fix: a self-reported contradiction is only
+    exempt from forcing CONTRADICTED if its own numbers actually check out --
+    an ungrounded number inside a "contradictions" entry is still a
+    fabrication and must still be caught."""
+    log = _log(("get_settlement_entries", {"batch_id": 1}, [{"order_ref": "HERO-01", "refund": 3472.5}]))
+    raw = {
+        "hypothesis": "ok", "verified_facts": [], "unverified_claims": [],
+        "contradictions": ["The refund of Rs.99999.99 disagrees with the order record."],
+        "possible_root_cause": "", "recommended_next_step": "", "confidence_basis": "",
+        "investigation_status": "VERIFIED_EXPLANATION", "requires_human_review": False,
+    }
+    result = _verify_investigation_result(raw, log, classification="MISSING_REFUND_RECORD")
+    assert result["investigation_status"] == "CONTRADICTED"
+    assert "REJECTED BY VERIFIER" in result["contradictions"][0]
+
+
 def test_partially_verified_when_some_claims_survive_and_some_dont():
     log = _log(("get_settlement_batch", {"batch_id": 2}, {"batch_id": 2, "total_net": 116294.35}))
     raw = {

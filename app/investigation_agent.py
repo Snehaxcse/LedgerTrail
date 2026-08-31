@@ -59,13 +59,15 @@ MAX_TOKENS = 2048  # 1024 confirmed too tight empirically: the final
 # mode ai_explain.py hit with its own token budget (300 -> 500) -- found by
 # actually running it, not by estimating in advance.
 REQUEST_TIMEOUT_SECONDS = 20.0
-MAX_TOOL_CALLS = 8  # bounded, per spec -- not counting the final submit_investigation_report
-# call. Started at 6; raised after an aggregate-classification investigation
-# (SYSTEMIC_FEE_DRIFT) genuinely ran out of budget mid-investigation before the
-# get_exception_evidence description above was clarified -- kept a little
-# headroom above what record-level cases have needed (6, organically) rather
-# than tuning it to the exact minimum, since "bounded" doesn't have to mean
-# "as tight as possible".
+MAX_TOOL_CALLS = 14  # bounded, per spec -- not counting the final submit_investigation_report
+# call. Started at 6, raised to 8 (aggregate SYSTEMIC_FEE_DRIFT case), then 12,
+# then 14 -- a genuinely multi-order hero case (three affected orders, each
+# needing get_order + get_refunds + verify_amount_relationship, plus 3
+# batch-level context calls = 12 non-redundant, well-organized calls) still
+# hadn't reached submit_investigation_report at 12. "Bounded" means a real
+# ceiling exists, not that it's tuned to the tightest number that still
+# barely works -- a case designed to need real multi-tool investigation
+# should be able to actually finish that investigation.
 NUMBER_TOLERANCE = 0.01
 
 VALID_STATUSES = (
@@ -174,12 +176,17 @@ _TOOL_SCHEMAS = [
         "the time it was classified -- either resolved settlement/order/bank records, "
         "or (for SYSTEMIC_FEE_DRIFT/SYSTEMIC_REFUND_DRIFT) the statistical comparison "
         "against the baseline. This is the fastest way to see what the deterministic "
-        "engine itself already found for this exception. For SYSTEMIC_FEE_DRIFT/"
-        "SYSTEMIC_REFUND_DRIFT specifically: the returned comparison (batch rate vs. "
-        "baseline mean/stdev) IS the evidence -- it's a batch-wide statistical finding, "
-        "not attributable to any single order, so inspecting individual orders one by "
-        "one is unlikely to explain it and will exhaust your tool budget without "
-        "adding useful evidence.",
+        "engine itself already found for this exception. IMPORTANT: for record-level "
+        "classifications, the settlement_entries/order_records/bank_transactions "
+        "returned here are the FULL records (every field, including refund_amount and "
+        "fee_amount), not just references -- calling get_order or get_settlement_entries "
+        "again for something already listed here is redundant and wastes your tool "
+        "budget. Only call those separately for records NOT already included here (e.g. "
+        "an order you want to compare against but that isn't part of this exception's "
+        "own evidence). For SYSTEMIC_FEE_DRIFT/SYSTEMIC_REFUND_DRIFT specifically: the "
+        "returned comparison (batch rate vs. baseline mean/stdev) IS the evidence -- "
+        "it's a batch-wide statistical finding, not attributable to any single order, "
+        "so inspecting individual orders one by one is unlikely to explain it.",
         "input_schema": {
             "type": "object",
             "properties": {"exception_id": {"type": "integer"}},
@@ -495,15 +502,44 @@ def _verify_investigation_result(
     allowed_numbers, identifier_strings = _build_evidence_context(tool_call_log)
 
     verified_facts: List[str] = []
-    contradictions: List[str] = list(raw_result.get("contradictions") or [])
     unverified_claims: List[str] = list(raw_result.get("unverified_claims") or [])
+
+    # Two different kinds of "contradiction", kept separate on purpose:
+    #   verifier_rejections -- THIS verifier caught a claim citing a number no
+    #     tool ever returned. This is a confirmed fabrication and is the ONLY
+    #     thing that forces CONTRADICTED -- "AI interpretation rejected" should
+    #     mean the AI's claim didn't hold up against evidence, not "the AI
+    #     mentioned that two data sources disagree".
+    #   ai_reported_contradictions -- the AI itself used the contradictions
+    #     field (per its own schema description: "anything that contradicts
+    #     your hypothesis or an earlier claim"), and every number in it DID
+    #     check out. Observed live: the tool schema's "contradictions" field
+    #     naturally invites describing the exception's own two-systems-disagree
+    #     nature (e.g. "settlement shows a refund, the order record shows
+    #     none") -- that's the AI honestly describing the finding, not the AI
+    #     being wrong. A grounded self-reported contradiction is treated the
+    #     same as an unverified_claim: it's a real, disclosed open question
+    #     worth flagging (PARTIALLY_VERIFIED), not proof the AI fabricated
+    #     something.
+    verifier_rejections: List[str] = []
+    ai_reported_contradictions: List[str] = []
 
     for claim in raw_result.get("verified_facts") or []:
         bad_number = _claim_is_grounded(claim, allowed_numbers, identifier_strings)
         if bad_number is None:
             verified_facts.append(claim)
         else:
-            contradictions.append(
+            verifier_rejections.append(
+                f"{claim} [REJECTED BY VERIFIER: states {bad_number}, which does not match "
+                f"any number returned by a tool call in this investigation]"
+            )
+
+    for claim in raw_result.get("contradictions") or []:
+        bad_number = _claim_is_grounded(claim, allowed_numbers, identifier_strings)
+        if bad_number is None:
+            ai_reported_contradictions.append(claim)
+        else:
+            verifier_rejections.append(
                 f"{claim} [REJECTED BY VERIFIER: states {bad_number}, which does not match "
                 f"any number returned by a tool call in this investigation]"
             )
@@ -511,36 +547,34 @@ def _verify_investigation_result(
     # The narrative fields are held to the same standard -- a fabricated number
     # in the hypothesis/root-cause/next-step text is exactly the failure mode
     # this verifier exists to catch, not just numbers mislabeled as "verified".
-    narrative_bad_numbers = []
     for field_name in ("hypothesis", "possible_root_cause", "recommended_next_step", "confidence_basis"):
         text = raw_result.get(field_name)
         if not text:
             continue
         bad = _claim_is_grounded(text, allowed_numbers, identifier_strings)
         if bad is not None:
-            narrative_bad_numbers.append((field_name, bad))
+            verifier_rejections.append(
+                f"{field_name} states {bad}, which does not match any number returned "
+                f"by a tool call in this investigation [FLAGGED BY VERIFIER]"
+            )
 
-    for field_name, bad_number in narrative_bad_numbers:
-        contradictions.append(
-            f"{field_name} states {bad_number}, which does not match any number returned "
-            f"by a tool call in this investigation [FLAGGED BY VERIFIER]"
-        )
+    contradictions = verifier_rejections + ai_reported_contradictions
 
     # NOTE: an empty verified_facts list is NOT by itself a downgrade signal --
     # a clean, fully-grounded investigation may legitimately have nothing that
     # needed individual fact-citation (e.g. "this is a timing difference, the
     # match is fuzzy" needs no separate verified_facts entry). Every claim that
-    # WAS made but turned out ungrounded already landed in `contradictions`
-    # above, so that branch alone (not "verified_facts ended up empty") is what
-    # actually signals a problem.
-    if contradictions:
+    # WAS made but turned out ungrounded already landed in verifier_rejections
+    # above, so THAT (not "verified_facts ended up empty", and not merely
+    # "contradictions is non-empty") is what actually signals CONTRADICTED.
+    if verifier_rejections:
         final_status = "CONTRADICTED"
     elif raw_result.get("investigation_status") == "INSUFFICIENT_EVIDENCE" and not verified_facts:
         # The AI's own abstention is respected when nothing contradicts it and
         # it isn't simultaneously claiming verified facts (which would be
         # self-inconsistent) -- abstaining is never a claim that needs grounding.
         final_status = "INSUFFICIENT_EVIDENCE"
-    elif unverified_claims:
+    elif unverified_claims or ai_reported_contradictions:
         final_status = "PARTIALLY_VERIFIED"
     else:
         final_status = "VERIFIED_EXPLANATION"

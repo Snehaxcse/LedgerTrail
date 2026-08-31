@@ -126,3 +126,10 @@ guarantee. Fixed and verified with a canary-row survival test. Confirmed via gre
 in app/ or scripts/ as of now. This fix means the ONE real historical gap in the
 audit trail (an untraceable early approval, exact circumstances unknown) cannot
 recur — but that gap itself is real and permanent in the history, not hidden.
+
+## Phase C critical finding (do not regress this)
+The evidence-laundering bug (bug 4) is the single most important thing found in this
+project. Any future tool added to investigation_tools.py that echoes back an input
+value must be excluded from evidence-harvesting for that value, or the verifier can
+be tricked into certifying AI-computed arithmetic as "grounded." Check this
+explicitly for any NEW comparison/verification tool added in future phases.
