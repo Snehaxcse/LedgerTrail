@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getBatches, getDataSources, getStats } from '../api'
+import MetricsStrip from '../components/MetricsStrip'
 import MiniBridge from '../components/MiniBridge'
 import StatusBanner from '../components/StatusBanner'
 import Amount from '../components/Amount'
@@ -37,27 +38,25 @@ export default function Dashboard() {
     }
   }, [])
 
-  const reconciledCount = batches.filter((batch) => batch.is_reconciled).length
-  const openCount = batches.filter((batch) => !batch.is_reconciled).length
-
   return (
     <div>
-      <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brass">Batches</p>
-          <h1 className="mt-1 font-serif text-4xl tracking-tight text-ink">Settlement dashboard</h1>
-          <p className="mt-2 max-w-xl text-ink-muted">
-            Status reflects whether every open exception is resolved — not just whether the bank amount
-            matches.
+      <div className="mb-8">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brass">Batches</p>
+        <h1 className="mt-1 font-serif text-4xl tracking-tight text-ink">Finance control center</h1>
+        {stats ? (
+          <p className="mt-2 text-sm text-ink-muted">
+            {stats.total_settlement_entries.toLocaleString('en-IN')} settlement entries ·{' '}
+            {stats.total_batches} batches
+            <br />
+            {stats.batches_reconciled_automatically} reconciled automatically ·{' '}
+            {stats.batches_requiring_review} require human review
           </p>
-        </div>
-        {!loading && !error ? (
-          <dl className="flex gap-6 text-sm">
-            <Stat label="Batches" value={batches.length} />
-            <Stat label="Reconciled" value={reconciledCount} tone="forest" />
-            <Stat label="Not reconciled" value={openCount} tone="rust" />
-          </dl>
         ) : null}
+        <p className="mt-2 max-w-xl text-ink-muted">
+          Status reflects whether every open exception is resolved — not just whether the bank amount
+          matches.
+        </p>
+        {stats ? <MetricsStrip stats={stats} /> : null}
       </div>
 
       {loading ? <p className="text-ink-muted">Loading batches…</p> : null}
@@ -169,12 +168,3 @@ function StatsCard({ stats }) {
   )
 }
 
-function Stat({ label, value, tone }) {
-  const color = tone === 'forest' ? 'text-forest' : tone === 'rust' ? 'text-rust' : 'text-ink'
-  return (
-    <div>
-      <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-muted">{label}</dt>
-      <dd className={`font-serif text-3xl leading-none ${color}`}>{value}</dd>
-    </div>
-  )
-}

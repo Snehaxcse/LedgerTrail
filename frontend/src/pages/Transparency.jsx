@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getTransparency } from '../api'
+import { getStats, getTransparency } from '../api'
 import HeldOutEvaluation from '../components/HeldOutEvaluation'
+import MetricsStrip from '../components/MetricsStrip'
 import { formatClassification, formatInr } from '../lib/format'
 
 function formatValue(value) {
@@ -15,14 +16,17 @@ function formatBatch(id) {
 
 export default function Transparency() {
   const [data, setData] = useState(null)
+  const [stats, setStats] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
-    getTransparency()
-      .then((payload) => {
-        if (!cancelled) setData(payload)
+    Promise.all([getTransparency(), getStats().catch(() => null)])
+      .then(([payload, statsData]) => {
+        if (cancelled) return
+        setData(payload)
+        setStats(statsData)
       })
       .catch((err) => {
         if (!cancelled) setError(err.message)
@@ -56,9 +60,25 @@ export default function Transparency() {
         </div>
       ) : null}
 
-      {summary ? (
-        <section className="mt-8 border border-ink/20 bg-paper-raised px-6 py-8">
+      {stats ? (
+        <section className="mt-8">
           <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-muted">
+            Reconciliation performance — primary dataset
+          </p>
+          <p className="mt-1 max-w-2xl text-sm text-ink-muted">
+            What the deterministic engine actually did with the {stats.total_batches} batches
+            everywhere else in this app, before the benchmark below.
+          </p>
+          <MetricsStrip stats={stats} />
+        </section>
+      ) : null}
+
+      {summary ? (
+        <section className="mt-10 border border-ink/20 bg-paper-raised px-6 py-8">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brass">
+            Detection benchmark — synthetic ground truth
+          </p>
+          <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-muted">
             Injected errors detected
           </p>
           <p className="mt-2 font-serif text-6xl leading-none tracking-tight text-ink sm:text-7xl">

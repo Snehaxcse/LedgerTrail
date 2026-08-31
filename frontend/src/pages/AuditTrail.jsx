@@ -1,14 +1,24 @@
 import { useEffect, useState } from 'react'
-import { getAuditTrail, getExceptionIndex } from '../api'
-import { describeAuditEvent } from '../lib/audit'
+import { getApprovers, getAuditTrail, getBatches, getExceptionIndex } from '../api'
+import { auditEventDetails } from '../lib/audit'
 import { formatDateTime } from '../lib/format'
+import Amount from '../components/Amount'
 
 const PAGE_SIZE = 50
 const EMPTY_INDEX = { byId: {}, byClassification: {} }
 
+const BADGE_TONE_STYLES = {
+  forest: 'bg-forest-wash text-forest',
+  rust: 'bg-rust-wash text-rust',
+  amber: 'bg-amber-wash text-amber',
+  brass: 'bg-rule/60 text-ink-muted',
+}
+
 export default function AuditTrail() {
   const [items, setItems] = useState([])
   const [index, setIndex] = useState(EMPTY_INDEX)
+  const [batchesById, setBatchesById] = useState({})
+  const [approversByName, setApproversByName] = useState({})
   const [total, setTotal] = useState(0)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -17,12 +27,19 @@ export default function AuditTrail() {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    Promise.all([getAuditTrail({ limit: PAGE_SIZE, offset: 0 }), getExceptionIndex()])
-      .then(([data, exceptionIndex]) => {
+    Promise.all([
+      getAuditTrail({ limit: PAGE_SIZE, offset: 0 }),
+      getExceptionIndex(),
+      getBatches().catch(() => []),
+      getApprovers().catch(() => []),
+    ])
+      .then(([data, exceptionIndex, batches, approvers]) => {
         if (cancelled) return
         setItems(data.items)
         setTotal(data.total)
         setIndex(exceptionIndex)
+        setBatchesById(Object.fromEntries(batches.map((b) => [b.id, b])))
+        setApproversByName(Object.fromEntries(approvers.map((p) => [p.name, p.role])))
       })
       .catch((err) => {
         if (!cancelled) setError(err.message)
@@ -72,15 +89,11 @@ export default function AuditTrail() {
       {items.length ? (
         <ol className="mt-8 divide-y divide-rule rounded-sm border border-rule bg-paper-raised">
           {items.map((event) => (
-            <li key={event.id} className="px-5 py-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <p className="text-sm text-ink-muted">{formatDateTime(event.timestamp)}</p>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brass">
-                  {event.actor}
-                </p>
-              </div>
-              <p className="mt-1 text-base text-ink">{describeAuditEvent(event, index)}</p>
-            </li>
+            <AuditEventCard
+              key={event.id}
+              event={event}
+              details={auditEventDetails(event, index, batchesById, approversByName)}
+            />
           ))}
         </ol>
       ) : null}
@@ -96,5 +109,68 @@ export default function AuditTrail() {
         </button>
       ) : null}
     </div>
+  )
+}
+
+function AuditEventCard({ event, details }) {
+  return (
+    <li className="px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`inline-block rounded-sm px-2 py-0.5 font-mono text-[11px] font-semibold tracking-[0.08em] ${BADGE_TONE_STYLES[details.badgeTone] || BADGE_TONE_STYLES.brass}`}
+          >
+            {details.badgeLabel}
+          </span>
+          <p className="text-sm text-ink">{details.subject}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brass">{event.actor}</p>
+          <p className="text-xs text-ink-muted">{formatDateTime(event.timestamp)}</p>
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-ink-muted">
+        {details.kind === 'reviewed' ? (
+          <>
+            <span>
+              {details.actor}
+              {details.role ? ` — ${details.role}` : ''}
+            </span>
+            {details.reason ? <span>Reason: {details.reason}</span> : null}
+          </>
+        ) : null}
+
+        {details.kind === 'created' ? (
+          <>
+            {details.amount !== null ? (
+              <span className="flex items-center gap-1">
+                Unexplained <Amount value={details.amount} className="text-ink-muted" />
+              </span>
+            ) : null}
+            {details.requiresApproval != null ? (
+              <span>{details.requiresApproval ? 'Requires approval' : 'Informational only'}</span>
+            ) : null}
+          </>
+        ) : null}
+
+        {details.kind === 'matched' ? (
+          <>
+            {details.matchBasis ? <span>{details.matchBasis}</span> : null}
+            {details.confidencePercent ? <span>{details.confidencePercent} confidence</span> : null}
+            {details.bankAmount !== null ? (
+              <span className="flex items-center gap-1">
+                Bank <Amount value={details.bankAmount} className="text-ink-muted" />
+              </span>
+            ) : null}
+            {details.variance !== null ? (
+              <span className="flex items-center gap-1">
+                Variance <Amount value={details.variance} className="text-ink-muted" />
+              </span>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+    </li>
   )
 }

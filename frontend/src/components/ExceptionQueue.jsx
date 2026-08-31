@@ -74,6 +74,16 @@ export default function ExceptionQueue({
     return ranked.filter((row) => row.severity === severityFilter)
   }, [exceptions, severityFilter])
 
+  const severityBreakdown = useMemo(() => {
+    const counts = { high: 0, medium: 0, low: 0 }
+    let totalUnexplained = 0
+    for (const row of exceptions) {
+      if (row.severity in counts) counts[row.severity] += 1
+      totalUnexplained += Number(row.unexplained_amount) || 0
+    }
+    return { ...counts, totalUnexplained }
+  }, [exceptions])
+
   function handleReject(row) {
     const text = (reasons[row.id] ?? '').trim()
     if (!approver.trim() || pendingId != null) return
@@ -153,6 +163,8 @@ export default function ExceptionQueue({
           </div>
         </div>
       </header>
+
+      {exceptions.length ? <SeverityBreakdownStrip breakdown={severityBreakdown} /> : null}
 
       {error ? (
         <p className="border-b border-rust/30 bg-rust-wash px-5 py-2 text-sm text-rust">{error}</p>
@@ -255,6 +267,32 @@ export default function ExceptionQueue({
         </ul>
       )}
     </section>
+  )
+}
+
+function SeverityBreakdownStrip({ breakdown }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-rule bg-paper px-5 py-2.5 text-sm">
+      <BreakdownItem label="High" value={breakdown.high} tone="rust" />
+      <BreakdownItem label="Medium" value={breakdown.medium} tone="amber" />
+      <BreakdownItem label="Low" value={breakdown.low} tone="forest" />
+      <span className="ml-auto flex items-baseline gap-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
+          Total unexplained
+        </span>
+        <Amount value={breakdown.totalUnexplained} className="font-semibold text-ink" />
+      </span>
+    </div>
+  )
+}
+
+function BreakdownItem({ label, value, tone }) {
+  const color = tone === 'rust' ? 'text-rust' : tone === 'amber' ? 'text-amber' : 'text-forest'
+  return (
+    <span className="flex items-baseline gap-1.5">
+      <span className={`font-serif text-lg font-semibold leading-none ${color}`}>{value}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">{label}</span>
+    </span>
   )
 }
 

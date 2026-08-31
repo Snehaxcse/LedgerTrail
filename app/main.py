@@ -350,6 +350,10 @@ class TimeSavedEstimate(BaseModel):
 
 class StatsResponse(BaseModel):
     total_batches: int
+    total_settlement_entries: int = Field(
+        description="COUNT(SettlementEntry) across all batches -- the order-level line "
+        "items the settlement report actually contains."
+    )
     batches_reconciled_automatically: int = Field(
         description="Batches with zero ExceptionRecord rows in the CURRENT classification "
         "pass -- never needed a human decision at all."
@@ -357,6 +361,16 @@ class StatsResponse(BaseModel):
     batches_requiring_review: int = Field(
         description="Batches with at least one ExceptionRecord row (any status: open, "
         "approved, or rejected) in the CURRENT pass -- needed at least one human decision."
+    )
+    unsafe_auto_resolutions: int = Field(
+        description="Open exceptions where CLASSIFICATION_INFO marks requires_approval=True "
+        "AND the batch's own is_reconciled computation is nonetheless True -- i.e. a case "
+        "that needed a human decision but whose batch-level status could be mistaken for "
+        "fully resolved. Same 'requires_approval AND reconciled' definition "
+        "app/holdout_evaluation.py uses, applied to the real primary dataset instead of "
+        "planted cases; reuses _batch_summary's actual is_reconciled logic rather than a "
+        "separate computation, so this stays meaningful (not a tautological always-0) if "
+        "that logic ever changes."
     )
     time_saved: TimeSavedEstimate
 
@@ -1016,6 +1030,7 @@ def get_stats(db: Session = Depends(get_db)):
     from TIME_SAVED_MINUTES_PER_EXCEPTION, not a measurement -- see that constant's
     comment for what it assumes and why."""
     total_batches = db.query(models.SettlementBatch).count()
+    total_settlement_entries = db.query(models.SettlementEntry).count()
 
     batch_ids_with_exceptions = {
         row[0] for row in db.query(models.ExceptionRecord.batch_id).distinct().all()
@@ -1026,10 +1041,24 @@ def get_stats(db: Session = Depends(get_db)):
     total_exceptions = db.query(models.ExceptionRecord).count()
     estimated_minutes_saved = round(total_exceptions * TIME_SAVED_MINUTES_PER_EXCEPTION, 1)
 
+    # Reuses _batch_summary's actual is_reconciled computation (never a separate
+    # definition) -- see StatsResponse.unsafe_auto_resolutions' description.
+    unsafe_auto_resolutions = 0
+    open_exceptions = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.status == "open").all()
+    batches_by_id = {b.id: b for b in db.query(models.SettlementBatch).all()}
+    for exc in open_exceptions:
+        if not CLASSIFICATION_INFO.get(exc.classification, {}).get("requires_approval", True):
+            continue
+        batch = batches_by_id.get(exc.batch_id)
+        if batch is not None and _batch_summary(db, batch).is_reconciled:
+            unsafe_auto_resolutions += 1
+
     return StatsResponse(
         total_batches=total_batches,
+        total_settlement_entries=total_settlement_entries,
         batches_reconciled_automatically=batches_reconciled_automatically,
         batches_requiring_review=batches_requiring_review,
+        unsafe_auto_resolutions=unsafe_auto_resolutions,
         time_saved=TimeSavedEstimate(
             assumption=(
                 f"Assumes ~{TIME_SAVED_MINUTES_PER_EXCEPTION:.0f} minutes of manual "

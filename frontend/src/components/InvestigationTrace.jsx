@@ -56,7 +56,36 @@ function summarizeInput(input) {
 }
 
 function isVerifierRejection(text) {
-  return typeof text === 'string' && text.includes('[REJECTED BY VERIFIER')
+  // Two tag formats from _verify_investigation_result (app/investigation_agent.py):
+  // "<claim> [REJECTED BY VERIFIER: states X, ...]" for verified_facts/contradictions,
+  // and "<field> states X, ... [FLAGGED BY VERIFIER]" for narrative fields (hypothesis,
+  // possible_root_cause, etc). Both are genuine verifier rejections; missing the second
+  // format meant those claims were previously mislabeled as "the AI itself noted" below.
+  return (
+    typeof text === 'string' &&
+    (text.includes('[REJECTED BY VERIFIER') || text.includes('[FLAGGED BY VERIFIER]'))
+  )
+}
+
+// Parses one verifier-rejection string back into a claim + the specific number the
+// verifier couldn't ground, for the CONTRADICTED spotlight below. Format A reads as a
+// natural sentence ("<claim> [REJECTED BY VERIFIER: ...]"); format B is a narrative-field
+// rejection ("<field> states X, ... [FLAGGED BY VERIFIER]"), less naturally phrased but
+// parsed the same way. Falls back to showing the raw text if the format ever changes.
+function parseVerifierRejection(text) {
+  let m = text.match(
+    /^(.*?)\s*\[REJECTED BY VERIFIER: states ([\d.]+), which does not match any number returned by a tool call in this investigation\]$/s,
+  )
+  if (m) {
+    return { format: 'claim', claim: m[1].trim(), badNumber: m[2] }
+  }
+  m = text.match(
+    /^(.+?) states ([\d.]+), which does not match any number returned by a tool call in this investigation \[FLAGGED BY VERIFIER\]$/s,
+  )
+  if (m) {
+    return { format: 'field', claim: `${m[1].trim()} states ${m[2]}`, badNumber: m[2] }
+  }
+  return { format: 'unknown', claim: text, badNumber: null }
 }
 
 // The malformed-shape safety check returns its own explanation through the
@@ -131,8 +160,12 @@ function InvestigationReport({ result }) {
     (c) => !isVerifierRejection(c) && !isMalformedShapeNotice(c),
   )
 
+  const spotlightRejection = isRejected && verifierRejections.length ? pickSpotlightRejection(verifierRejections) : null
+
   return (
     <div className="mt-3 space-y-4">
+      {spotlightRejection ? <ClaimSpotlight rejection={spotlightRejection} /> : null}
+
       <div className={`relative overflow-hidden rounded-sm border ${status.wrap}`} role="status">
         <div className={`absolute inset-y-0 left-0 w-1.5 ${status.bar}`} />
         <div className="px-4 py-3 pl-6">
@@ -253,6 +286,53 @@ function InvestigationReport({ result }) {
           final.
         </p>
       ) : null}
+    </div>
+  )
+}
+
+// Prefers a format-A rejection (reads as a natural sentence) for the spotlight over a
+// format-B one (a narrative field's raw "<field> states X" phrasing) when both exist.
+function pickSpotlightRejection(verifierRejections) {
+  const parsed = verifierRejections.map(parseVerifierRejection)
+  return parsed.find((p) => p.format === 'claim') || parsed[0] || null
+}
+
+function ClaimSpotlight({ rejection }) {
+  return (
+    <div className="rounded-sm border-2 border-rust bg-rust-wash px-5 py-5">
+      <p className="text-center text-[11px] font-semibold uppercase tracking-[0.2em] text-rust">
+        AI claimed something the ledger could not prove
+      </p>
+      <div className="mx-auto mt-4 max-w-xl space-y-2">
+        <SpotlightStep label="AI claim">{rejection.claim}</SpotlightStep>
+        <SpotlightArrow />
+        <SpotlightStep label="Evidence check">
+          {rejection.badNumber
+            ? `No tool call in this investigation returned ${rejection.badNumber} — nothing gathered as evidence supports this claim.`
+            : 'No tool call in this investigation returned a number matching this claim.'}
+        </SpotlightStep>
+        <SpotlightArrow />
+        <p className="pt-1 text-center text-xl font-bold uppercase tracking-[0.12em] text-rust">
+          ✕ Verdict: claim rejected
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function SpotlightArrow() {
+  return (
+    <div aria-hidden="true" className="flex justify-center text-lg leading-none text-rust">
+      ↓
+    </div>
+  )
+}
+
+function SpotlightStep({ label, children }) {
+  return (
+    <div className="rounded-sm border border-rust/40 bg-paper-raised px-4 py-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">{label}</p>
+      <p className="mt-1 text-sm leading-relaxed text-ink">{children}</p>
     </div>
   )
 }
