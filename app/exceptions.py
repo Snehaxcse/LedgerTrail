@@ -16,6 +16,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app import models, bridge
+from app.money import paise_to_rupees
 
 # Set to exact equality (0) rather than a nonzero tolerance -- we have no real
 # settlement data exhibiting genuine paisa-level aggregation rounding drift to
@@ -281,6 +282,16 @@ def _classify_batch(db, batch, match_row, bridge_result):
 
 def _log_exception_created(db, classification, unexplained_amount, requires_approval):
     # AuditEvent rows are append-only: never update or delete an AuditEvent once written.
+    #
+    # paise_to_rupees() here is a deliberate, narrow exception to this module
+    # staying paise-native throughout (see app/money.py's docstring, which
+    # otherwise lists exceptions.py as a module that must never call this):
+    # after_state is JSON returned verbatim by GET /audit-trail and rendered
+    # directly in the UI (AuditTrail.jsx) -- it's a response boundary like any
+    # other, just one that isn't a typed Pydantic model. Found live during a
+    # pre-merge regression pass: without this, the audit trail showed e.g.
+    # "unexplained Rs.79,934.00" for an exception whose actual amount was
+    # Rs.799.34 -- the raw paise integer displayed as if it were already rupees.
     db.add(
         models.AuditEvent(
             timestamp=datetime.datetime.now(),
@@ -290,7 +301,7 @@ def _log_exception_created(db, classification, unexplained_amount, requires_appr
             after_state=json.dumps(
                 {
                     "classification": classification,
-                    "unexplained_amount": unexplained_amount,
+                    "unexplained_amount": paise_to_rupees(unexplained_amount),
                     "requires_approval": requires_approval,
                 }
             ),

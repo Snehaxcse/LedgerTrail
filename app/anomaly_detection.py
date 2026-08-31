@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.exceptions import CLASSIFICATION_INFO
+from app.money import paise_to_rupees
 
 logger = logging.getLogger("ledgertrail.anomaly_detection")
 
@@ -222,6 +223,12 @@ def detect_anomalies(db: Session) -> List[AnomalyResult]:
 
 def _log_anomaly_created(db, classification, unexplained_amount, requires_approval):
     # AuditEvent rows are append-only: never update or delete an AuditEvent once written.
+    #
+    # paise_to_rupees() here is the same narrow, deliberate boundary exception
+    # as app/exceptions.py's _log_exception_created -- see that function's
+    # comment for the full explanation (found live during a pre-merge
+    # regression pass: the audit trail showed raw paise formatted as rupees,
+    # e.g. Rs.79,934.00 for an exception actually worth Rs.799.34).
     db.add(
         models.AuditEvent(
             timestamp=datetime.datetime.now(),
@@ -231,7 +238,7 @@ def _log_anomaly_created(db, classification, unexplained_amount, requires_approv
             after_state=json.dumps(
                 {
                     "classification": classification,
-                    "unexplained_amount": unexplained_amount,
+                    "unexplained_amount": paise_to_rupees(unexplained_amount),
                     "requires_approval": requires_approval,
                 }
             ),
