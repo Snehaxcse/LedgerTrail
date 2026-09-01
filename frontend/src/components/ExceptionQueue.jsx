@@ -251,7 +251,7 @@ export default function ExceptionQueue({
                             title={row.policy_reason}
                             className="rounded-sm border border-brass bg-amber-wash px-3 py-1.5 text-sm font-medium text-brass disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brass"
                           >
-                            {pendingId === row.id ? 'Saving…' : 'Auto-resolve'}
+                            {pendingId === row.id ? 'Saving…' : 'Confirm & resolve'}
                           </button>
                         ) : null}
                         {!approver.trim() ? (
@@ -322,7 +322,7 @@ function SeverityBadge({ severity }) {
 }
 
 // Deterministic policy check (app/policy.py) -- never implies zero human
-// interaction. Clicking the paired Auto-resolve button still requires
+// interaction. Clicking the paired Confirm & resolve button still requires
 // picking a name from the same approver dropdown as Approve/Reject; the
 // server re-validates eligibility itself before honoring the request either way.
 function PolicyEligibleBadge({ reason }) {
