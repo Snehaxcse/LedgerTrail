@@ -110,6 +110,12 @@ redeploy, re-verify live, then rehearsal.
 3. AI explanation system prompt must explicitly forbid Markdown formatting
    (no #, **, or list markers) — plain prose only, since the frontend displays
    the text as-is with no Markdown rendering.
+4. is_reconciled (per-batch, bank-match + no blocking exceptions) and
+   batches_requiring_review (any exception exists, including non-blocking
+   informational ones) are DELIBERATELY different definitions, not a bug —
+   confirmed correct-by-design during Group 1 work and re-confirmed during
+   the policy-engine regression pass. Do not "fix" this again without
+   discussing first.
 
 ## Operational note: demo staging is destroyed by every regen
 ApprovalLog is correctly wiped on every generate_synthetic_data.py/ingest.py run
