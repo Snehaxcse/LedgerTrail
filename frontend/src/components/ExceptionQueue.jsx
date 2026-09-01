@@ -186,6 +186,9 @@ export default function ExceptionQueue({
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-medium text-ink">{formatClassification(row.classification)}</p>
                       <SeverityBadge severity={row.severity} />
+                      {row.status === 'open' && row.requires_approval && row.policy_eligible ? (
+                        <PolicyEligibleBadge reason={row.policy_reason} />
+                      ) : null}
                     </div>
                     <ReviewSummary exception={row} />
                     <p className="mt-2 text-sm leading-snug text-ink-muted">{row.suggested_action}</p>
@@ -240,6 +243,17 @@ export default function ExceptionQueue({
                         >
                           Reject
                         </button>
+                        {row.policy_eligible ? (
+                          <button
+                            type="button"
+                            disabled={!approver.trim() || pendingId != null}
+                            onClick={() => onReview(row.id, 'approved', undefined, 'policy_confirmed')}
+                            title={row.policy_reason}
+                            className="rounded-sm border border-brass bg-amber-wash px-3 py-1.5 text-sm font-medium text-brass disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brass"
+                          >
+                            {pendingId === row.id ? 'Saving…' : 'Auto-resolve'}
+                          </button>
+                        ) : null}
                         {!approver.trim() ? (
                           <span className="self-center text-xs text-ink-muted">
                             Select an approver to decide.
@@ -303,6 +317,21 @@ function SeverityBadge({ severity }) {
       className={`inline-block rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] ${SEVERITY_STYLES[severity]}`}
     >
       {severity}
+    </span>
+  )
+}
+
+// Deterministic policy check (app/policy.py) -- never implies zero human
+// interaction. Clicking the paired Auto-resolve button still requires
+// picking a name from the same approver dropdown as Approve/Reject; the
+// server re-validates eligibility itself before honoring the request either way.
+function PolicyEligibleBadge({ reason }) {
+  return (
+    <span
+      title={reason}
+      className="inline-block rounded-sm border border-brass bg-amber-wash px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-brass"
+    >
+      Eligible for auto-resolution
     </span>
   )
 }

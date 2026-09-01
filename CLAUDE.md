@@ -210,3 +210,110 @@ provides zero actual cost or latency reduction on any of the four features,
 including investigation_agent.py, the exact feature this was added to help
 before the 40-run benchmark. This was not spun as "enabled" without checking
 -- it was measured, found inert at current sizes, and reported that way.
+
+## Investigation Agent Redesign (post-Group-3 benchmark)
+
+Group 3's 42-run benchmark (committed earlier) found the hero case (3-order
+multi-tool investigation) was the worst-performing case type: 86% escalated to
+HUMAN_REVIEW_REQUIRED, 71% retry rate, frequent MAX_TOOL_CALLS exhaustion,
+avg only 0.7 verified facts even on escalated runs. Root cause: the agent was
+spending its 14-call budget discovering what evidence existed rather than
+investigating it (no case-specific starting context, no evidence/verification
+tool distinction, no explicit stop condition).
+
+FIX (not a budget increase - MAX_TOOL_CALLS stayed at 14, deliberately):
+1. Added get_investigation_context(exception_id) tool - returns a deterministic
+   up-front case packet (affected orders, expected/actual amounts, relevant
+   refunds/bank transactions/dates) so the agent starts investigating
+   immediately instead of discovering what to look at.
+2. Split existing tools into two documented categories: "evidence tools"
+   (retrieve facts) vs "verification tools" (establish facts deterministically) -
+   app/investigation_tools.py.
+3. Added per-exception-type investigation objectives to the system prompt.
+4. Added an explicit "stop once sufficient evidence exists" condition, so the
+   agent doesn't burn calls just because the budget allows it.
+
+RESULT, verified across 10 real hero-case runs (3 batches, ~$0.48 total cost):
+80% PARTIALLY_VERIFIED (up from Group 3's ~14% success rate), 20%
+HUMAN_REVIEW_REQUIRED (down from 86%), 0% budget exhaustion (down from frequent),
+avg 7.1 verified facts per successful run (up from 0.7). The 2 remaining
+escalations were BOTH genuine malformed-shape events, retried, still malformed,
+correctly failed closed - not silent acceptance of a bad result.
+
+IMPORTANT PROCESS NOTE for future benchmarks: Group 3's raw per-run JSON tallies
+were NOT committed as data files - only a summary made it into a commit message,
+so a like-for-like verified/unverified/rejected comparison against this redesign
+wasn't fully possible (only the escalation rate survived). Any future benchmark
+run should commit the raw per-run results file, not just summarize in a commit
+message.
+
+Files changed: app/investigation_tools.py (get_investigation_context, tool
+category comments), app/investigation_agent.py (system prompt objectives +
+stop condition). MAX_TOOL_CALLS unchanged at 14.
+
+Test data: redesign_checkpoint_batch1.json, batch2.json, batch3.json (repo root,
+committed) - raw per-run results for this redesign's verification, kept as data
+files per the process note above.
+
+## Deterministic auto-resolution policy layer (app/policy.py)
+
+A second, additional confirmation path alongside Approve/Reject - never a
+replacement, never automatic with zero human interaction. Eligibility rule:
+bank variance == 0 for the exception's batch, AND every claim in its cached
+AI investigation is grounded (verified_facts non-empty, unverified_claims and
+contradictions both empty), AND severity is not "high". Pure Python, reuses
+bridge.compute_bridge() and the already-verified investigation_result column
+- no new AI calls, no new arithmetic.
+
+Eligibility is only ever computed from an exception's EXISTING cached
+investigation_result. It never triggers a fresh investigation - an exception
+with no investigation yet simply shows no badge, same as before this feature
+existed. Most real exceptions today have no cached investigation (only
+SYSTEMIC_FEE_DRIFT, id 7, does, via boot-time pre-warming) - see
+app/investigation_agent.py's docstrings and the "AI Investigation Agent"
+section above for why investigation_result is populated on demand, not eagerly.
+
+SERVER-SIDE RE-VALIDATION (do not weaken this): the approve endpoint's
+resolution_method="policy_confirmed" is never trusted at face value.
+_approve_exception_core re-runs policy.check_auto_resolution_eligibility_for_batch
+against the current row before honoring it, and 400s if the exception doesn't
+actually qualify right now - a stale UI badge (or a crafted request) cannot
+bypass the policy gate.
+
+resolution_method is threaded through ApprovalLog.resulting_action (free
+text) and AuditEvent.after_state (JSON blob) rather than a new ApprovalLog
+column - this codebase has no migration tooling, and ApprovalLog is already
+wiped and recreated by run_startup_sequence() on every boot, so a new
+structured column would need a manual ALTER TABLE to appear on an existing
+ledgertrail.db. Deferred; revisit only if the column is actually needed for
+querying/reporting later.
+
+KNOWN PRE-EXISTING DUPLICATION this feature reuses rather than fixes:
+bridge.compute_bridge() (app/bridge.py) and app/main.py's _batch_summary are
+two independent implementations of "total_net - matched bank amount". Both
+paise-scale, both compare against the shared bridge.VARIANCE_TOLERANCE
+constant, so they agree today - guarded by
+tests/test_policy.py::test_bridge_variance_agrees_with_dashboard_variance_for_every_real_batch,
+which cross-checks every real batch and would fail CI the moment the two
+implementations diverge. Not unified into one function in this pass - out of
+scope for a policy-layer addition, flagged here for whoever eventually
+consolidates bridge.py and app/main.py's batch-summary logic.
+
+Verified: 11 tests in tests/test_policy.py (isolated in-memory DB per case:
+eligible, and each individual blocking condition) + 6 tests in
+tests/test_auto_resolution_approval.py (server-side re-validation rejecting
+an ineligible policy_confirmed claim, decision='rejected' paired with
+policy_confirmed rejected, manual approvals unaffected) + the pre-existing
+tests/test_approve_concurrency.py passing unmodified (auto-resolve reuses
+the identical compare-and-set UPDATE, no concurrency-path changes). Full
+suite: 83/83. Live-verified against the real dataset: exception 1 (high
+severity) and exception 7 (SYSTEMIC_FEE_DRIFT, unverified_claims present)
+both correctly report policy_eligible=False with the specific blocking
+reason; no exception in the current primary dataset happens to be eligible
+today (none has a clean, fully-verified investigation on a zero-variance
+batch yet), so the eligible/badge/button path is proven by the isolated
+tests and the shared approve_exception code path, not by a live click in the
+browser - noting this gap explicitly rather than overclaiming a live
+end-to-end demo that didn't happen. Frontend: npm run build clean, no
+console errors on Dashboard/batch-bridge/Transparency/Audit-trail pages
+before or after.

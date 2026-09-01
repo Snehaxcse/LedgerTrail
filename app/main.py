@@ -30,7 +30,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from app import bridge, demo_cache, models
+from app import bridge, demo_cache, models, policy
 from app.ai_explain import generate_explanation
 from app.anomaly_detection import ANOMALY_CLASSIFICATIONS
 from app.database import get_db, ensure_schema
@@ -214,6 +214,12 @@ class ExceptionOut(BaseModel):
     linked_evidence_ids: List[dict]
     approver: Optional[str] = None
     reason: Optional[str] = None
+    # Deterministic policy check (app/policy.py) -- never triggers a new AI
+    # investigation. False (with a reason) for any exception that has no
+    # cached investigation_result yet, same as showing no investigation
+    # trace at all until "Investigate with AI" is clicked.
+    policy_eligible: bool = False
+    policy_reason: Optional[str] = None
 
 
 class EvidenceOut(BaseModel):
@@ -246,6 +252,14 @@ class ApprovalRequest(BaseModel):
     )
     decision: Literal["approved", "rejected"]
     reason: Optional[str] = None
+    # "policy_confirmed" is the Auto-resolve path: a human still picks an approver
+    # from the same dropdown as a normal approve, but is asserting the deterministic
+    # policy check (app/policy.py) already found this exception eligible. NEVER
+    # trusted at face value -- _approve_exception_core re-runs the eligibility check
+    # itself server-side before honoring this, exactly like every other value in this
+    # request. A client sending "policy_confirmed" for an ineligible exception gets a
+    # 400, not a silent downgrade to "manual".
+    resolution_method: Literal["manual", "policy_confirmed"] = "manual"
 
 
 class ApprovalResponse(BaseModel):
@@ -253,6 +267,7 @@ class ApprovalResponse(BaseModel):
     status: str
     approval_log_id: int
     reason: Optional[str] = None
+    resolution_method: str = "manual"
 
 
 class DemoApproverOut(BaseModel):
@@ -771,10 +786,16 @@ def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db)):
             if log.exception_id not in latest_log_by_exception:
                 latest_log_by_exception[log.exception_id] = log
 
+    # Computed once per request, not once per row -- compute_variance_by_batch
+    # reuses bridge.compute_bridge, a full scan over every batch, so calling it
+    # inside the loop below would recompute it once per exception for nothing.
+    variance_by_batch = policy.compute_variance_by_batch(db)
+
     out = []
     for e in rows:
         info = CLASSIFICATION_INFO.get(e.classification, {})
         log = latest_log_by_exception.get(e.id)
+        eligibility = policy.check_auto_resolution_eligibility(e, variance_by_batch.get(e.batch_id))
         out.append(
             ExceptionOut(
                 id=e.id,
@@ -788,6 +809,8 @@ def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db)):
                 linked_evidence_ids=_list_evidence_ids(e.linked_evidence_ids),
                 approver=log.approver if log else None,
                 reason=log.reason if log else None,
+                policy_eligible=eligibility.eligible,
+                policy_reason=eligibility.reason,
             )
         )
     return out
@@ -927,6 +950,26 @@ def _approve_exception_core(db: Session, exception_id: int, body: ApprovalReques
     if body.decision == "rejected" and not reason:
         raise HTTPException(status_code=400, detail="reason is required when decision is 'rejected'")
 
+    # Auto-resolve is a confirmation of an approval, never a rejection -- and NEVER
+    # trusted at face value: the eligibility claim in the request is re-checked here
+    # against the current row, exactly the same deterministic policy.py logic that
+    # decided whether the badge/button was shown in the first place. A client (or a
+    # stale UI that fetched the exception list before something changed) sending
+    # resolution_method="policy_confirmed" for an exception that doesn't actually
+    # qualify right now gets a 400, not a silent downgrade to a manual approval.
+    if body.resolution_method == "policy_confirmed":
+        if body.decision != "approved":
+            raise HTTPException(
+                status_code=400,
+                detail="resolution_method='policy_confirmed' is only valid with decision='approved'.",
+            )
+        eligibility = policy.check_auto_resolution_eligibility_for_batch(db, exc)
+        if not eligibility.eligible:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Exception {exception_id} is not eligible for policy-confirmed auto-resolution: {eligibility.reason}",
+            )
+
     # The single atomic statement that actually prevents a double-write: the WHERE
     # clause is evaluated by the database against the row as it stands AT THAT
     # MOMENT, not against exc.status read above -- rowcount is the only thing this
@@ -960,7 +1003,11 @@ def _approve_exception_core(db: Session, exception_id: int, body: ApprovalReques
             detail += f" Current state: {current.status.upper()} BY {last_log.approver.upper()}."
         raise HTTPException(status_code=409, detail=detail)
 
-    resulting_action = f"status set to '{body.decision}'"
+    resulting_action = (
+        f"status set to '{body.decision}' (policy-confirmed auto-resolution)"
+        if body.resolution_method == "policy_confirmed"
+        else f"status set to '{body.decision}'"
+    )
     approval_log = models.ApprovalLog(
         exception_id=exception_id,
         approver=body.approver,
@@ -975,6 +1022,11 @@ def _approve_exception_core(db: Session, exception_id: int, body: ApprovalReques
     # AuditEvent rows are append-only: never update or delete an AuditEvent once
     # written. before_state is hardcoded "open" -- guaranteed by the UPDATE's own
     # WHERE clause having just matched it, for this request specifically.
+    # resolution_method is folded into this existing JSON blob rather than a new
+    # ApprovalLog column -- see app/policy.py's module docstring / CLAUDE.md for
+    # why: this codebase has no migration tooling, and ApprovalLog is already
+    # wiped and recreated on every regen, so a new structured column would need
+    # either a manual ALTER TABLE or a full regen to appear on an existing DB.
     db.add(
         models.AuditEvent(
             timestamp=datetime.datetime.now(),
@@ -988,6 +1040,7 @@ def _approve_exception_core(db: Session, exception_id: int, body: ApprovalReques
                     "approver": body.approver,
                     "decision": body.decision,
                     "reason": reason,
+                    "resolution_method": body.resolution_method,
                 }
             ),
         )
@@ -1000,6 +1053,7 @@ def _approve_exception_core(db: Session, exception_id: int, body: ApprovalReques
         status=body.decision,
         approval_log_id=approval_log.id,
         reason=reason,
+        resolution_method=body.resolution_method,
     )
 
 

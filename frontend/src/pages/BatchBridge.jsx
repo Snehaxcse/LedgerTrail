@@ -66,7 +66,7 @@ export default function BatchBridge() {
     setExceptions(nextExceptions)
   }
 
-  async function handleReview(exceptionId, decision, reason) {
+  async function handleReview(exceptionId, decision, reason, resolutionMethod) {
     const name = approver.trim()
     if (!name || pendingId != null) return
     if (decision === 'rejected' && !String(reason ?? '').trim()) return
@@ -79,6 +79,7 @@ export default function BatchBridge() {
         approver: name,
         decision,
         reason: decision === 'rejected' ? String(reason).trim() : undefined,
+        resolutionMethod,
       })
       await refreshBatch()
       setNotice({

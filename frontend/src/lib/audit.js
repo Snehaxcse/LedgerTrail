@@ -76,11 +76,14 @@ export function describeAuditEvent(event, index) {
     const decision = after?.decision || after?.status
     const reason = after?.reason
     const subject = subjectLabel(classification, batchId)
+    const isPolicyConfirmed = after?.resolution_method === 'policy_confirmed'
     if (decision === 'rejected') {
       return reason ? `${subject} rejected by ${who}: ${reason}` : `${subject} rejected by ${who}`
     }
     if (decision === 'approved') {
-      return `${subject} approved by ${who}`
+      return isPolicyConfirmed
+        ? `${subject} auto-resolved (policy-confirmed) by ${who}`
+        : `${subject} approved by ${who}`
     }
     if (before?.status && after?.status) {
       return `${subject} ${before.status} → ${after.status} by ${who}`
@@ -136,14 +139,16 @@ export function auditEventDetails(event, index, batchesById = {}, approversByNam
     const fromStatus = String(before.status || 'open').toUpperCase()
     const toStatus = String(after.status || decision || '').toUpperCase()
     const actor = after.approver || 'unknown'
+    const isPolicyConfirmed = after.resolution_method === 'policy_confirmed'
     return {
       kind: 'reviewed',
-      badgeLabel: `${fromStatus} → ${toStatus}`,
+      badgeLabel: isPolicyConfirmed ? `${fromStatus} → ${toStatus} (AUTO-RESOLVED)` : `${fromStatus} → ${toStatus}`,
       badgeTone: decision === 'rejected' ? 'rust' : 'forest',
       subject,
       actor,
       role: approversByName[actor] || null,
       reason: after.reason || null,
+      resolutionMethod: after.resolution_method || 'manual',
     }
   }
 

@@ -37,10 +37,13 @@ export function getExceptionEvidence(batchId, exceptionId) {
   return api(`/batches/${batchId}/exceptions/${exceptionId}/evidence`)
 }
 
-export function reviewException(id, { approver, decision, reason }) {
+export function reviewException(id, { approver, decision, reason, resolutionMethod }) {
   const body = { approver, decision }
   if (reason != null && reason !== '') {
     body.reason = reason
+  }
+  if (resolutionMethod != null) {
+    body.resolution_method = resolutionMethod
   }
   return api(`/exceptions/${id}/approve`, {
     method: 'POST',
