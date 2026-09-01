@@ -25,9 +25,9 @@ export default function IdempotencyDemo() {
       <h3 className="mt-1 font-serif text-xl tracking-tight text-ink">Replay settlement data</h3>
       <p className="mt-2 max-w-2xl text-sm text-ink-muted">
         Ingests the held-out dataset's 14 records into a fresh isolated database, then immediately
-        ingests the exact same data again. Each record's source_event_id has a real database UNIQUE
-        constraint — the second pass's duplicates are rejected by SQLite itself, not by an
-        application-code "does this already exist" check.
+        ingests the exact same data again. The database itself refuses to store the same settlement
+        event twice — the second pass's duplicates are rejected by SQLite, not by an
+        application-level "does this already exist" check.
       </p>
 
       {!result && !loading ? (

@@ -64,8 +64,8 @@ export default function ApprovalRaceDemo() {
       <h3 className="mt-1 font-serif text-xl tracking-tight text-ink">Duplicate approval attempt</h3>
       <p className="mt-2 max-w-2xl text-sm text-ink-muted">
         Approves a throwaway exception in an isolated sandbox as Sneha, then attempts to approve the
-        SAME exception again as Rahul — the real compare-and-set endpoint logic
-        (_approve_exception_core), the real 409, not a scripted response.
+        SAME exception again as Rahul. The second attempt hits the live approval path and gets a
+        real 409 — not a scripted response.
       </p>
 
       <label className="mt-4 flex max-w-xs flex-col gap-1 text-sm">

@@ -94,9 +94,9 @@ export default function ReconciliationProgressDemo() {
       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-muted">Live run</p>
       <h3 className="mt-1 font-serif text-xl tracking-tight text-ink">Run reconciliation</h3>
       <p className="mt-2 max-w-2xl text-sm text-ink-muted">
-        Each step below is a real, separately-awaited call into the held-out sandbox's isolated
-        database — matching.run_matching, bridge.compute_bridge, exceptions.classify_exceptions, the
-        same functions used everywhere else in this app. Nothing here is a timed animation.
+        Each step below is a real, separately-awaited request against the held-out sandbox's
+        isolated database — matching, bridging, classifying — the same pipeline this app uses
+        everywhere else. Nothing here is a timed animation.
       </p>
 
       {!started ? (
