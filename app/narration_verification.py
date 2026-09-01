@@ -108,7 +108,10 @@ def verify_narration(bank_transaction: Dict[str, Any]) -> VerificationResult:
         response = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
+            # cache_control: same rationale and same measured no-op-at-
+            # current-length caveat as app/ai_explain.py's identical comment
+            # -- see that file and CLAUDE.md's "Prompt caching" note.
+            system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(block.text for block in response.content if block.type == "text").strip()

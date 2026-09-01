@@ -176,3 +176,37 @@ investigation endpoints simply fall back to their normal live, uncached call
 window at boot instead of permanently. Pre-warming failing entirely (e.g.
 ANTHROPIC_API_KEY not configured) degrades the same way, indefinitely rather
 than just briefly.
+
+## Prompt caching (added, verified live -- correctly configured, currently a no-op)
+`cache_control: {"type": "ephemeral"}` is set on the system prompt (all four
+AI-calling modules: investigation_agent.py, ai_explain.py, nl_query.py,
+narration_verification.py) and on the last tool schema in
+investigation_agent.py's `_TOOL_SCHEMAS` -- the content that's byte-identical
+on every round-trip of a multi-step investigation, so caching it should cut
+cost/latency on repeated calls within a short window (cache entries expire
+after 5 minutes of inactivity, per Anthropic's docs).
+
+MEASURED LIVE, per the user's explicit requirement not to assume this works
+just because the code compiles: the mechanism itself is confirmed correct --
+a synthetic ~4400-token system prompt showed `cache_creation_input_tokens`
+on the first call and a matching `cache_read_input_tokens` on the second,
+identical-prefix call. But investigation_agent.py's ACTUAL system+tools
+prefix (SYSTEM_PROMPT + all ten real tool schemas) measured at ~2903 tokens
+via a direct live call -- and at that size, `cache_creation_input_tokens`
+and `cache_read_input_tokens` were BOTH 0 on every one of 28 real API calls
+across 3 full investigate_exception() runs (turns within one investigation
+included, which all reuse the identical cacheable prefix). A second direct
+test bracketed the cause precisely: 2903 tokens does not cache, 4401 tokens
+does -- claude-haiku-4-5's real minimum cacheable prompt length sits
+somewhere in that range, higher than the 2048 figure sometimes assumed for
+Haiku models, not the 1024 that applies to Sonnet/Opus. The three simpler
+modules' system prompts (154-338 tokens estimated) are even further below
+this threshold on their own (no tools array to combine with).
+
+Net effect: prompt caching is correctly implemented everywhere it was asked
+for, and would engage automatically if the system prompt or tool set ever
+grows past the measured threshold -- but as everything is sized today, it
+provides zero actual cost or latency reduction on any of the four features,
+including investigation_agent.py, the exact feature this was added to help
+before the 40-run benchmark. This was not spun as "enabled" without checking
+-- it was measured, found inert at current sizes, and reported that way.

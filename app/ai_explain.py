@@ -226,7 +226,16 @@ def generate_explanation(exception_record: Dict[str, Any], evidence_data: Dict[s
         response = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
+            # cache_control: SYSTEM_PROMPT is identical on every call this
+            # function makes. Correctly configured (see
+            # investigation_agent.py's cache_control comments for how that
+            # was confirmed working in principle), but this system prompt
+            # alone is well under investigation_agent.py's ~2903-token
+            # prefix, which itself already measured below the cacheable
+            # minimum -- so this is a no-op in practice at its current
+            # length. Kept because it's free and correct. See CLAUDE.md's
+            # "Prompt caching" note.
+            system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(block.text for block in response.content if block.type == "text").strip()

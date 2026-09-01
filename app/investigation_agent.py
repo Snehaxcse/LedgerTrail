@@ -90,33 +90,95 @@ SYSTEM_PROMPT = (
     "if a tool returns null, empty, or 'not found', say so plainly rather than "
     "guessing. You do not decide whether to approve or reject anything -- that is "
     "always a human decision; your job is to investigate and explain, not to act. "
-    "Use the tools to gather whatever evidence is genuinely relevant to this "
-    "exception -- you may call as few or as many as you need, within the limit "
-    "you're given. When you have gathered enough evidence (or determined you "
-    "cannot), call submit_investigation_report exactly once to conclude. "
-    "If the evidence is genuinely insufficient to explain the exception, set "
-    "investigation_status to INSUFFICIENT_EVIDENCE and say so plainly instead of "
-    "inventing a plausible-sounding explanation -- this is correct, expected "
-    "behavior when the evidence doesn't support a conclusion, not a failure. "
+    "Write plain prose only, no Markdown formatting. "
+    "\n\n"
+    "ALWAYS start by calling get_investigation_context with this exception's id -- "
+    "it returns a single up-front case packet (affected orders, expected/actual "
+    "amounts where applicable, relevant refunds, bank transactions, dates, and "
+    "known variances) that answers most of what you'd otherwise need several "
+    "separate calls to find out. It states FACTS ONLY, never a conclusion -- "
+    "interpreting it is still your job. Then follow the objectives for this "
+    "exception's classification:\n"
+    "MISSING_REFUND_RECORD or REFUND_NOT_IN_SETTLEMENT: 1. Identify affected "
+    "orders. 2. Retrieve refund records for each. 3. Compare expected vs "
+    "recorded. 4. Verify each material claim. 5. Stop once sufficient evidence "
+    "exists.\n"
+    "FEE_TIER_MISMATCH: 1. Identify affected orders. 2. Compare each order's "
+    "expected fee (its own order record) against the settlement entry's actual "
+    "fee. 3. Verify the difference deterministically. 4. Stop once sufficient "
+    "evidence exists.\n"
+    "DUPLICATE_ENTRY: 1. Identify the duplicated order_ref. 2. Confirm it "
+    "appears more than once among the batch's settlement entries with matching "
+    "amounts. 3. Confirm the bank credit reflects only one real payout. 4. Stop "
+    "once sufficient evidence exists.\n"
+    "TIMING_DIFFERENCE: 1. Compare the batch's settlement_date against its "
+    "matched bank transaction's date. 2. Confirm the gap is within the matching "
+    "window. 3. Stop once sufficient evidence exists -- this classification is "
+    "informational only and rarely needs more than the case packet and "
+    "calculate_bridge.\n"
+    "UNMATCHED_BATCH or UNEXPLAINED_VARIANCE: 1. Retrieve bank transaction "
+    "candidates for the batch. 2. Compare the batch's declared net against the "
+    "closest candidate, or confirm none exists. 3. Verify the variance "
+    "deterministically. 4. Stop once sufficient evidence exists.\n"
+    "SYSTEMIC_FEE_DRIFT or SYSTEMIC_REFUND_DRIFT: this is a batch-wide "
+    "statistical finding, not attributable to any single order -- do not call "
+    "get_order or get_refunds repeatedly for individual orders looking for the "
+    "cause; no single order explains a batch-wide rate shift, and doing this "
+    "wastes your tool budget without adding evidence. 1. Get the batch-wide rate "
+    "comparison (in the case packet's known_variances, or get_exception_"
+    "evidence). 2. Confirm the batch is otherwise internally and externally "
+    "consistent via calculate_bridge. 3. Stop once sufficient evidence exists.\n"
+    "\n"
+    "SUFFICIENT EVIDENCE, STOP CONDITION: conclude and call "
+    "submit_investigation_report once every material claim in your hypothesis is "
+    "evidenced by an actual tool result and no contradiction remains -- do not "
+    "keep calling tools just because they're still available. Calling every tool "
+    "'to be thorough' after you already have enough evidence to conclude is not "
+    "more rigorous; it wastes your bounded budget and invites claims you can't "
+    "actually ground. Equally, if the evidence is genuinely insufficient to "
+    "explain the exception, set investigation_status to INSUFFICIENT_EVIDENCE "
+    "and say so plainly instead of inventing a plausible-sounding explanation -- "
+    "this is correct, expected behavior when the evidence doesn't support a "
+    "conclusion, not a failure. "
     "verified_facts must be facts you personally confirmed via an actual tool "
     "result in this conversation, not things you assume, infer, or consider "
     "likely -- if you are not certain a claim is directly supported by a tool "
-    "result you received, put it in unverified_claims instead. Write plain prose "
-    "only, no Markdown formatting. "
-    "You have a limited number of tool calls -- use them efficiently. For a "
-    "SYSTEMIC_FEE_DRIFT or SYSTEMIC_REFUND_DRIFT exception specifically: this is a "
-    "batch-wide statistical finding, not attributable to any single order. Do not "
-    "call get_order or get_refunds repeatedly for individual orders within the "
-    "batch looking for the cause -- no single order explains a batch-wide rate "
-    "shift, and doing this will exhaust your tool budget without adding evidence. "
-    "get_exception_evidence's comparison (batch rate vs. baseline mean/stdev) is "
-    "the evidence for this classification; calculate_bridge and get_settlement_batch "
-    "are enough to additionally confirm the batch itself is otherwise consistent."
+    "result you received, put it in unverified_claims instead."
 )
 
 # --- Tool schemas (Anthropic tool-use format) --------------------------------
+# Two explicit categories, matching app/investigation_tools.py's own section
+# headers -- EVIDENCE tools (retrieve authoritative facts) first, then
+# VERIFICATION tools (establish a relationship between facts already in
+# hand). No tool in either group ever asks the model to compute something
+# the backend can compute deterministically and hand back as the answer.
 
 _TOOL_SCHEMAS = [
+    # ---------- evidence tools ----------
+    {
+        "name": "get_investigation_context",
+        "description": "Call this FIRST, before anything else. Returns a single "
+        "deterministic case packet for this exception: exception_type, affected_orders, "
+        "settlement_id, expected_amount/actual_amount (the one currency figure this "
+        "classification's own comparison turns on -- refund for MISSING_REFUND_RECORD/ "
+        "REFUND_NOT_IN_SETTLEMENT, fee for FEE_TIER_MISMATCH; null for classifications with "
+        "no single order-level amount at stake, e.g. DUPLICATE_ENTRY, TIMING_DIFFERENCE, "
+        "UNMATCHED_BATCH, UNEXPLAINED_VARIANCE, SYSTEMIC_FEE_DRIFT/SYSTEMIC_REFUND_DRIFT), "
+        "relevant_refunds (both the order record's and every settlement entry's refund "
+        "figure, per affected order), relevant_bank_transactions, relevant_dates, and "
+        "known_variances (unexplained_amount, bridge_variance). This replaces several "
+        "separate lookups you would otherwise need to make one at a time. IMPORTANT: every "
+        "field here is a raw fact, never a conclusion -- nothing in this packet says what's "
+        "wrong or why; you still have to interpret it. Calling get_exception_evidence, "
+        "get_refunds, or calculate_bridge afterward for something already in this packet is "
+        "redundant and wastes your tool budget -- only call those for something NOT already "
+        "included here.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"exception_id": {"type": "integer"}},
+            "required": ["exception_id"],
+        },
+    },
     {
         "name": "get_settlement_batch",
         "description": "Fetches one settlement batch's declared totals (gross, refunds, "
@@ -212,6 +274,7 @@ _TOOL_SCHEMAS = [
             "required": ["batch_id"],
         },
     },
+    # ---------- verification tools ----------
     {
         "name": "verify_amount_relationship",
         "description": "Deterministically compares two rupee amounts you name and "
@@ -296,6 +359,29 @@ _TOOL_SCHEMAS = [
                 "investigation_status", "requires_human_review",
             ],
         },
+        # Anthropic prompt caching: a cache_control breakpoint on the LAST tool
+        # caches everything up to and including it (system prompt + this whole
+        # tools array), since both are identical on every round-trip of a
+        # multi-step investigation -- only `messages` changes turn to turn.
+        # Only the final tool needs the marker; it's not needed on every entry.
+        #
+        # MEASURED, NOT ASSUMED: correctly configured (confirmed live -- a
+        # large synthetic prompt shows cache_creation_input_tokens on the
+        # first call and cache_read_input_tokens on repeats with byte-
+        # identical usage.cache_creation ephemeral_5m_input_tokens numbers),
+        # but this specific prefix (SYSTEM_PROMPT + all ten tools) is ~2903
+        # tokens -- empirically confirmed BELOW claude-haiku-4-5's minimum
+        # cacheable length (a 4401-token prompt cached; this one, measured
+        # directly with the real SYSTEM_PROMPT/_TOOL_SCHEMAS, did not; true
+        # threshold brackets somewhere in 2903-4401, not the 2048 sometimes
+        # assumed for Haiku). Net effect: as currently sized, this never
+        # actually produces a cache hit -- the cacheable portion doesn't grow
+        # with turn count, only `messages` does. Left in place because it's
+        # correct and free, and benefits any future growth of the system
+        # prompt or tool set past that threshold -- but it is not currently
+        # reducing cost or latency on this feature. See CLAUDE.md's
+        # "Prompt caching" note for the full measurement.
+        "cache_control": {"type": "ephemeral"},
     },
 ]
 
@@ -626,6 +712,8 @@ def _verify_investigation_result(
 # --- Orchestration (the only part that touches the network) -----------------
 
 def _dispatch_tool(db, name: str, tool_input: Dict[str, Any]) -> Any:
+    if name == "get_investigation_context":
+        return tools.get_investigation_context(db, tool_input["exception_id"])
     if name == "get_settlement_batch":
         return tools.get_settlement_batch(db, tool_input["batch_id"])
     if name == "get_settlement_entries":
@@ -713,7 +801,18 @@ def _run_investigation_attempt(
     for turn in range(MAX_TOOL_CALLS + 1):
         try:
             response = client.messages.create(
-                model=MODEL, max_tokens=MAX_TOKENS, system=SYSTEM_PROMPT,
+                model=MODEL, max_tokens=MAX_TOKENS,
+                # cache_control here + on the last tool schema (_TOOL_SCHEMAS,
+                # above): both are byte-identical on every round-trip of a
+                # multi-step investigation, only `messages` grows turn to
+                # turn. Correctly configured and confirmed working in
+                # principle (see that tool schema's own comment) -- but
+                # measured live against this actual system+tools content
+                # (~2903 tokens), it does not currently produce a cache hit:
+                # below claude-haiku-4-5's minimum cacheable length. Kept
+                # anyway (correct, free, and forward-compatible with a larger
+                # prompt/toolset); see CLAUDE.md's "Prompt caching" note.
+                system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
                 messages=messages, tools=_TOOL_SCHEMAS,
             )
         except Exception:

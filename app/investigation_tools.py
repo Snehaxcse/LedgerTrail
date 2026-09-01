@@ -42,6 +42,22 @@ Design decisions worth being explicit about:
    ~20 lines of duplication. Both read the exact same linked_evidence_ids
    JSON shape and the same models, so they cannot disagree about what the
    data actually is, only duplicate the code that reads it.
+
+4. Tool architecture redesign: every tool below is now explicitly one of two
+   kinds, marked by section header -- EVIDENCE tools (retrieve authoritative
+   facts: settlement entries, orders, refunds, bank records, exception
+   evidence, the up-front case packet, the bridge) or VERIFICATION tools
+   (establish a relationship between facts the model already has:
+   amount/reference/narration checks). No tool asks the model to compute
+   something the backend can compute deterministically and hand back --
+   get_investigation_context is the clearest instance of this: a single
+   up-front case packet (exception_type, affected_orders, settlement_id,
+   expected_amount, actual_amount, relevant_refunds, relevant_bank_
+   transactions, relevant_dates, known_variances) that replaces several
+   separate lookups the model previously had to make and stitch together
+   itself. It returns FACTS ONLY -- no "reason" or "confirmed" field, nothing
+   that states a conclusion; interpreting the packet is still entirely the
+   model's job, this tool only removes the bookkeeping of assembling it.
 """
 import json
 from typing import Any, Dict, List, Optional
@@ -106,7 +122,13 @@ def _bank_txn_dict(txn: models.BankTransaction) -> Dict[str, Any]:
     }
 
 
-# ---------- tools ----------
+# ---------- evidence tools: retrieve authoritative facts -------------------
+# Every tool below this line returns data the backend already has or already
+# computed -- settlement/order/bank records, the exception's own linked
+# evidence, the up-front case packet, the gross->net bridge. None of them ask
+# the model to compute anything; if a number can be derived deterministically
+# (a total, a rate, a bridge variance), the TOOL derives it and hands back the
+# answer. See "verification tools" below for the other half of this split.
 
 def get_settlement_batch(db: Session, batch_id: int) -> Optional[Dict[str, Any]]:
     batch = db.query(models.SettlementBatch).filter(models.SettlementBatch.id == batch_id).first()
@@ -223,6 +245,102 @@ def get_exception_evidence(db: Session, exception_id: int) -> Optional[Dict[str,
     }
 
 
+# Which single currency figure this classification actually turns on, as an
+# (order_field, entry_field) pair -- both read directly off the order/entry
+# records, never derived. A deterministic lookup table, not model judgment:
+# picking WHICH field is relevant to a classification is backend knowledge
+# (exceptions.py already encodes this in its own comparisons), not something
+# the model should have to infer from the classification name. Classifications
+# with no single order-level amount at stake (batch-wide or date-based) are
+# deliberately absent -- their evidence lives in relevant_dates/known_variances
+# instead of being force-fit into a currency pair that doesn't apply to them.
+_EXPECTED_ACTUAL_FIELD_BY_CLASSIFICATION = {
+    "MISSING_REFUND_RECORD": ("refund_amount", "refund"),
+    "REFUND_NOT_IN_SETTLEMENT": ("refund_amount", "refund"),
+    "FEE_TIER_MISMATCH": ("fee_amount", "fee"),
+}
+
+
+def get_investigation_context(db: Session, exception_id: int) -> Optional[Dict[str, Any]]:
+    """A deterministic case packet, meant as the FIRST tool call of an
+    investigation -- replaces several separate lookups (get_exception_evidence,
+    get_refunds per order, get_settlement_batch, calculate_bridge) the model
+    previously had to make and stitch together itself before it had enough
+    context to even decide what to look at next.
+
+    Returns FACTS ONLY: raw figures, dates, and record references. No field
+    here states a conclusion, a reason, or whether anything is "confirmed" --
+    exception_type is included so the packet is self-describing, but nothing
+    says why it's an exception or what to do about it. That interpretation is
+    still entirely the model's job; this tool only removes the bookkeeping of
+    gathering the pieces.
+
+    expected_amount/actual_amount: see _EXPECTED_ACTUAL_FIELD_BY_CLASSIFICATION
+    -- null for classifications with no single order-level amount at stake
+    (DUPLICATE_ENTRY, TIMING_DIFFERENCE, UNMATCHED_BATCH, UNEXPLAINED_VARIANCE,
+    the two SYSTEMIC_* anomaly types); their real evidence is in relevant_dates
+    or known_variances instead."""
+    exc = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id == exception_id).first()
+    if exc is None:
+        return None
+
+    evidence = get_exception_evidence(db, exception_id)
+    batch = db.query(models.SettlementBatch).filter(models.SettlementBatch.id == exc.batch_id).first()
+
+    if evidence and evidence.get("evidence_type") == "record_references":
+        affected_orders = sorted({o["order_ref"] for o in evidence["order_records"]}
+                                  | {e["order_ref"] for e in evidence["settlement_entries"]})
+    else:
+        # Anomaly classifications (SYSTEMIC_FEE_DRIFT/SYSTEMIC_REFUND_DRIFT):
+        # batch-wide, not attributable to any single order -- every order_ref
+        # in the batch is "affected" in the sense of contributing to the
+        # aggregate rate, listed as such rather than naming none at all.
+        affected_orders = sorted({e["order_ref"] for e in get_settlement_entries(db, exc.batch_id)})
+
+    expected_amount = actual_amount = None
+    fields = _EXPECTED_ACTUAL_FIELD_BY_CLASSIFICATION.get(exc.classification)
+    if fields and evidence and evidence.get("evidence_type") == "record_references":
+        order_field, entry_field = fields
+        order_total = sum(
+            (o[order_field] for o in evidence["order_records"] if o[order_field] is not None), 0.0
+        )
+        entry_total = sum(e[entry_field] for e in evidence["settlement_entries"])
+        expected_amount = round(order_total, 2)
+        actual_amount = round(entry_total, 2)
+
+    relevant_refunds = [get_refunds(db, order_ref) for order_ref in affected_orders]
+
+    relevant_bank_transactions = []
+    if batch and batch.bank_transaction_id:
+        relevant_bank_transactions.append(_bank_txn_dict(batch.bank_transaction))
+
+    relevant_dates = {
+        "settlement_date": batch.settlement_date.isoformat() if batch else None,
+        "matched_bank_transaction_date": (
+            batch.bank_transaction.date.isoformat() if batch and batch.bank_transaction_id else None
+        ),
+    }
+
+    bridge_result = calculate_bridge(db, exc.batch_id)
+    known_variances = {
+        "unexplained_amount": paise_to_rupees(exc.unexplained_amount),
+        "bridge_variance": bridge_result["variance"] if bridge_result else None,
+    }
+
+    return {
+        "exception_id": exc.id,
+        "exception_type": exc.classification,
+        "affected_orders": affected_orders,
+        "settlement_id": exc.batch_id,
+        "expected_amount": expected_amount,
+        "actual_amount": actual_amount,
+        "relevant_refunds": relevant_refunds,
+        "relevant_bank_transactions": relevant_bank_transactions,
+        "relevant_dates": relevant_dates,
+        "known_variances": known_variances,
+    }
+
+
 def calculate_bridge(db: Session, batch_id: int) -> Optional[Dict[str, Any]]:
     """Reuses bridge.compute_bridge() as-is -- it computes every batch in one
     pass, so this just filters to the one requested. Not a reimplementation:
@@ -250,6 +368,17 @@ def calculate_bridge(db: Session, batch_id: int) -> Optional[Dict[str, Any]]:
             }
     return None
 
+
+# ---------- verification tools: establish facts deterministically ---------
+# These don't retrieve new records -- they take values the model already has
+# in hand (read from an evidence tool above) and deterministically establish
+# a relationship between them: does A equal B within tolerance, does one
+# string appear inside another, is a narration consistent with a real
+# settlement credit. The model must never compute these relationships itself
+# (a subtraction, a substring check, a keyword match) when a tool exists to
+# establish the same fact without any risk of arithmetic drift or invented
+# evidence -- see each tool's own docstring for why, and
+# investigation_agent.py's SYSTEM_PROMPT for the corresponding instruction.
 
 def verify_amount_relationship(
     amount_a: float, amount_b: float, label_a: str, label_b: str, tolerance_rupees: float = 0.0
