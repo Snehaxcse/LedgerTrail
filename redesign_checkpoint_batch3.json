@@ -1,0 +1,41 @@
+[
+  {
+    "run": 8,
+    "source": "ai_investigated",
+    "investigation_status": "PARTIALLY_VERIFIED",
+    "retried": false,
+    "budget_exhausted": false,
+    "verified_facts_count": 6,
+    "unverified_claims_count": 3,
+    "rejected_claims_count": 0,
+    "raw_api_calls": 7,
+    "total_input_tokens": 36236,
+    "total_output_tokens": 2180
+  },
+  {
+    "run": 9,
+    "source": "ai_investigated",
+    "investigation_status": "PARTIALLY_VERIFIED",
+    "retried": false,
+    "budget_exhausted": false,
+    "verified_facts_count": 7,
+    "unverified_claims_count": 3,
+    "rejected_claims_count": 0,
+    "raw_api_calls": 4,
+    "total_input_tokens": 18152,
+    "total_output_tokens": 1691
+  },
+  {
+    "run": 10,
+    "source": "ai_investigated",
+    "investigation_status": "PARTIALLY_VERIFIED",
+    "retried": false,
+    "budget_exhausted": false,
+    "verified_facts_count": 7,
+    "unverified_claims_count": 3,
+    "rejected_claims_count": 0,
+    "raw_api_calls": 5,
+    "total_input_tokens": 23163,
+    "total_output_tokens": 1521
+  }
+]

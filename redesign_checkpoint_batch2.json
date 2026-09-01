@@ -1,0 +1,54 @@
+[
+  {
+    "run": 4,
+    "source": "ai_investigated",
+    "investigation_status": "HUMAN_REVIEW_REQUIRED",
+    "retried": true,
+    "budget_exhausted": false,
+    "verified_facts_count": 0,
+    "unverified_claims_count": 0,
+    "rejected_claims_count": 1,
+    "raw_api_calls": 13,
+    "total_input_tokens": 65965,
+    "total_output_tokens": 4207
+  },
+  {
+    "run": 5,
+    "source": "ai_investigated",
+    "investigation_status": "HUMAN_REVIEW_REQUIRED",
+    "retried": true,
+    "budget_exhausted": false,
+    "verified_facts_count": 0,
+    "unverified_claims_count": 0,
+    "rejected_claims_count": 1,
+    "raw_api_calls": 11,
+    "total_input_tokens": 53541,
+    "total_output_tokens": 3935
+  },
+  {
+    "run": 6,
+    "source": "ai_investigated",
+    "investigation_status": "PARTIALLY_VERIFIED",
+    "retried": false,
+    "budget_exhausted": false,
+    "verified_facts_count": 8,
+    "unverified_claims_count": 4,
+    "rejected_claims_count": 0,
+    "raw_api_calls": 7,
+    "total_input_tokens": 34778,
+    "total_output_tokens": 2048
+  },
+  {
+    "run": 7,
+    "source": "ai_investigated",
+    "investigation_status": "PARTIALLY_VERIFIED",
+    "retried": false,
+    "budget_exhausted": false,
+    "verified_facts_count": 7,
+    "unverified_claims_count": 3,
+    "rejected_claims_count": 0,
+    "raw_api_calls": 6,
+    "total_input_tokens": 28790,
+    "total_output_tokens": 2169
+  }
+]
