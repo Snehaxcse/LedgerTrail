@@ -1,31 +1,70 @@
 # LedgerTrail
 
-**AI-assisted settlement reconciliation that does not trust the AI with financial truth.**
+### AI-assisted settlement reconciliation that does not trust the AI with financial truth.
 
-**The problem:** a settlement can match the bank exactly and still be unreconciled — because individual refunds, fees, or ledger records remain inconsistent underneath a number that happens to add up.
+> **AI investigates. Deterministic systems decide. Humans retain control.**
 
-LedgerTrail processes 172 settlement entries across 10 batches, deterministically reconciles financial state, investigates unresolved exceptions with a read-only AI agent, independently verifies the agent's claims against the evidence it actually retrieved, and applies deterministic policy before any exception can be resolved.
+A settlement can match the bank exactly and still be unreconciled — because individual refunds, fees, or ledger records remain inconsistent underneath a number that happens to add up.
 
-**AI investigates. Deterministic systems decide. Humans retain control.**
+LedgerTrail processes **172 settlement entries across 10 batches**, deterministically reconciles financial state, investigates unresolved exceptions with a read-only AI agent, independently verifies the agent's claims against the evidence it actually retrieved, and applies deterministic policy before any exception can be resolved.
 
-- **Live demo:** https://ledger-trail-rho.vercel.app/
-- **Backend:** https://ledgertrail-1.onrender.com
-- **Track:** 4 — AI Finance Controller
+---
+
+## 🚀 Live Demo
+
+- **Live application:** [https://ledger-trail-rho.vercel.app/](https://ledger-trail-rho.vercel.app/)
+- **Backend API:** [https://ledgertrail-1.onrender.com](https://ledgertrail-1.onrender.com)
+- **Buildathon track:** Track 4 — AI Finance Controller
 - **Dataset:** 172 settlement entries / 10 batches
+- **Authentication:** None required. Approver identities shown in the demo are simulated and explicitly disclosed in the UI.
+
+### 60-second judge path
+
+1. **Dashboard** — see 172 entries across 10 batches.
+2. **Batch 2** — see why an exact bank match can still be unreconciled.
+3. **Batch 9** — run the AI investigation and watch an unsupported AI claim get rejected.
+4. **Transparency** — inspect benchmark, held-out evaluation and adversarial safeguards.
+5. **Audit Trail** — see the human-authorized resolution recorded with before/after state.
 
 ---
 
 ## The Problem
 
-Finance teams reconciling payment settlements typically have three versions of the truth: the merchant's own order records, the payment processor's settlement report, and what actually landed in the bank. Small, real discrepancies — a refund the internal system never logged, a fee tier mismatch, a duplicated line item, ordinary settlement-to-bank timing lag — make reconciliation slow and error-prone precisely because a *bank-level* match can look clean while an *underlying* discrepancy sits unexamined.
+Finance teams reconciling payment settlements typically have three versions of the truth:
 
-Most naive tools stop at "does the total match." LedgerTrail's core claim is that this is not sufficient evidence a settlement is correct.
+- the merchant's order records
+- the payment processor's settlement report
+- what actually landed in the bank
+
+A settlement can therefore **match at the bank level while still being wrong underneath**.
+
+Examples include:
+
+- a refund missing from the internal ledger
+- a fee-tier mismatch
+- a duplicated settlement line
+- an expected timing difference
+- an unmatched batch
+- unexplained settlement variance
+- systemic fee drift
+
+Most naive reconciliation systems stop at:
+
+> **"Does the total match?"**
+
+LedgerTrail asks the more useful question:
+
+> **"What explains the discrepancy underneath the total?"**
 
 ---
 
-## What LedgerTrail Does
+## What Makes LedgerTrail Different?
 
-```
+Most reconciliation systems determine whether totals match.
+
+LedgerTrail separates **financial truth** from **AI interpretation**.
+
+```text
 BANK MATCHES
      ↓
 Does NOT necessarily mean
@@ -41,24 +80,29 @@ Evidence verification
 Policy
      ↓
 Human resolution
+
 ```
 
-**LedgerTrail separates financial truth from AI interpretation.** That is the thesis the rest of this document defends.
+The core design principle is:
+
+> The AI can investigate financial ambiguity, but it cannot become the source of financial truth.
 
 ---
 
 ## Track 4 Alignment
 
-| Requirement | LedgerTrail |
-|---|---|
-| 50+ synthetic records | 172 settlement entries across 10 batches |
-| Reconciliation | Deterministic settlement ↔ bank matching and gross-to-net bridge |
-| Exception handling | Missing refund (both directions), fee tier mismatch, duplicate entry, timing difference, unmatched batch, unexplained variance, systemic fee drift |
-| AI assistance | Bounded, read-only, multi-tool investigation agent |
-| Accuracy measurement | Synthetic ground-truth benchmark (primary dataset) **and** a separate held-out evaluation the engine was never tuned against |
-| Human oversight | Policy-gated human resolution — every resolution requires a named, identified human click |
-| Auditability | Append-only audit trail, every event with before/after state |
-| Safe automation | Deterministic policy engine; 0 unsafe auto-resolutions to date |
+
+| Track requirement     | LedgerTrail                                                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 50+ synthetic records | 172 settlement entries across 10 batches                                                                                        |
+| Reconciliation        | Deterministic settlement ↔ bank matching and gross-to-net bridge                                                                |
+| Exception handling    | Missing refunds, fee mismatches, duplicates, timing differences, unmatched batches, unexplained variance and systemic fee drift |
+| AI assistance         | Bounded, read-only, multi-tool investigation agent                                                                              |
+| Accuracy measurement  | Synthetic ground-truth regression benchmark + separate held-out evaluation                                                      |
+| Human oversight       | Policy-gated resolution with an explicitly identified human approver                                                            |
+| Auditability          | Audit trail records before/after state for financial mutations                                                                  |
+| Safe automation       | Deterministic policy engine; 0 unsafe auto-resolutions                                                                          |
+
 
 ---
 
@@ -66,65 +110,114 @@ Human resolution
 
 ```
 Settlement + Bank + Ledger Data
-             │
-             ▼
-   Deterministic Reconciliation
-             │
-      ┌──────┴──────┐
-      ▼             ▼
-   Matched      Exception
-                     │
-                     ▼
-             Read-only AI Agent
-                     │
-               Tool evidence
-                     │
-                     ▼
-             Claim Verification
-                     │
-                     ▼
-               Policy Engine
-                     │
-             ┌───────┴───────┐
-             ▼               ▼
-     Policy-eligible    Human Review
-             │               │
-             └───────┬───────┘
+              │
+              ▼
+     Deterministic Reconciliation
+              │
+       ┌──────┴──────┐
+       ▼             ▼
+    Matched       Exception
+                      │
                       ▼
-            Human confirms (named)
+              Read-only AI Agent
+                      │
+                  Tool evidence
+                      │
+                      ▼
+              Claim Verification
+                      │
+                      ▼
+                Policy Engine
+                      │
+              ┌───────┴───────┐
+              ▼               ▼
+       Policy-eligible     Human Review
+              │               │
+              └───────┬───────┘
+                      ▼
+              Human confirms
+                (named)
+                      │
                       ▼
                  Audit Trail
+
 ```
 
-**The LLM has no write access to financial state.** Matching, the gross-to-net bridge, exception classification, and anomaly detection are plain deterministic Python — no model call sits anywhere inside them.
+**Critical trust boundary:** the LLM has no write access to financial state. Matching, the gross-to-net bridge, exception classification and anomaly detection are deterministic Python logic. No model call sits inside these financial calculations.
+
+### Trust Boundaries
+
+
+| Component                     | Trusted to do                              |
+| ----------------------------- | ------------------------------------------ |
+| Reconciliation engine         | Calculate authoritative financial state    |
+| Database                      | Persist application state                  |
+| AI agent                      | Investigate and form hypotheses            |
+| Evidence store / tool results | Provide retrieved application evidence     |
+| Claim verifier                | Determine whether AI claims are supported  |
+| Policy engine                 | Determine whether a resolution is eligible |
+| Human approver                | Authorize the final resolution             |
+
+
+**The rule:** no probabilistic component is trusted with final financial authority.
 
 ---
 
 ## What AI Actually Does
 
 The AI is **not** responsible for:
+
 - calculating settlement amounts
-- deciding whether bank and settlement amounts match
+- deciding whether bank and settlement totals match
 - modifying financial records
 - approving or resolving exceptions
 - determining authoritative financial truth
 
 Instead, it:
-- selects which read-only investigation tools to call, and in what order, per exception
-- retrieves related orders, refunds, bank transactions, and settlement evidence
+
+- selects which read-only investigation tools to call
+- chooses the order in which to investigate an exception
+- retrieves related orders, refunds, bank transactions and settlement evidence
 - forms an investigative hypothesis
 - produces factual claims tied to the evidence it retrieved
 - explains the discrepancy in plain language
 
-**Every financial claim the AI makes is independently checked against the actual evidence returned by the tools it called — never taken on the model's word.**
+**Every financial claim the AI makes is independently checked against the actual evidence returned by the tools it called. The model's confidence is never treated as evidence.**
 
-A deterministic policy engine then decides whether an investigation's evidence is clean enough (zero unverified claims, zero contradictions, non-high severity, zero bank variance) to surface as "eligible for fast-track resolution." Even then, a human still selects their name and clicks to confirm — the policy engine proposes, it never resolves anything on its own.
+---
+
+## Why AI, Not Just Deterministic Rules?
+
+Deterministic rules are the right tool for establishing financial truth. They are less useful when an ambiguous exception spans multiple related records and requires investigation.
+
+For example:
+
+```
+Settlement exception
+       ↓
+Order
+       ↓
+Payment
+       ↓
+Refund
+       ↓
+Bank transaction
+       ↓
+Settlement bridge
+
+```
+
+The AI helps decide what to investigate and how the evidence relates. The verifier and policy engine decide what is actually supported and what the system is allowed to do.
+
+> Rules determine what is true. AI helps determine what to investigate and explain.
 
 ---
 
 ## Example: When the AI Is Wrong
 
-The investigation agent, during real testing, claimed a settlement batch contained an exact number of entries it had never actually retrieved from any tool — it estimated. The real count was different.
+During development, the investigation agent claimed that a settlement batch contained an exact number of entries it had never actually retrieved from any tool. The real count was different.
+
+LedgerTrail caught it:
 
 ```
 AI claim
@@ -135,12 +228,29 @@ Contradiction detected
    ↓
 CLAIM REJECTED
    ↓
-Human review — no unsafe resolution
+Human review
+
 ```
 
-The investigation status becomes `CONTRADICTED`, shown explicitly in the UI as **"AI interpretation rejected — authoritative evidence does not support this conclusion,"** with the fabricated claim shown separately from every other, legitimately grounded fact in the same report.
+The investigation status becomes `CONTRADICTED`. The UI explicitly separates the rejected interpretation from legitimately grounded facts.
 
-**This is not a staged failure.** It is a real, reproducible mistake the agent made repeatedly during development. LedgerTrail treats an LLM claim as a hypothesis until independently verified — this is that principle caught in the act, not asserted as a feature.
+**The model can make the claim. It cannot make the claim true.**
+
+This is a real, reproducible failure observed during development — not a staged success case.
+
+---
+
+## Financial Safety Invariants
+
+1. **AI cannot mutate financial state.** Every investigation tool is read-only.
+2. **Financial calculations are deterministic.** Settlement bridge calculations and reconciliation decisions never depend on a model call.
+3. **AI claims require evidence.** Claims are independently verified against actual tool results before being labeled verified.
+4. **Contradictions block trust.** A contradicted claim cannot satisfy resolution policy or be labeled verified.
+5. **Policy is enforced server-side.** A client cannot bypass the eligibility gate by sending a trusted-looking flag. The server re-checks policy before honoring a fast-track confirmation.
+6. **Approvals are atomic.** A compare-and-set database operation guarantees that only one concurrent request can transition an exception out of `open`.
+7. **Replay is rejected.** Duplicate ingestion is blocked by a database-level uniqueness constraint rather than an application-level existence check.
+8. **AI failure degrades safely.** Malformed or failed investigations fall back to human review — never to a financial mutation.
+9. **Money uses integer arithmetic.** Financial amounts are represented internally as integer paise rather than floating-point values.
 
 ---
 
@@ -148,93 +258,91 @@ The investigation status becomes `CONTRADICTED`, shown explicitly in the UI as *
 
 **Primary demo dataset** — 172 settlement entries across 10 batches. This is the dataset behind the live product experience.
 
-**Detection benchmark** — 7 errors deliberately planted across the primary dataset (missing refund, fee tier mismatch, duplicate entry, timing difference, systemic fee drift — several planted more than once, on different orders, to check detection generalizes rather than being tuned to one example).
+**Detection benchmark** — 7 planted errors across the primary dataset, covering missing refund, fee tier mismatch, duplicate entry, timing difference, and systemic fee drift. Several exception types are planted more than once, on different orders, to test that detection is not dependent on a single hard-coded example.
 
-**Held-out evaluation** — a second, separate 14-record dataset, run through the exact same, unmodified reconciliation code, in an isolated database that never touches the primary dataset. Its purpose is to answer "does this generalize," which a benchmark you also developed against cannot fully answer on its own.
+**Held-out evaluation** — a separate 14-record dataset, evaluated using the same unmodified reconciliation code inside an isolated database. The held-out dataset is not used to tune the primary reconciliation logic.
 
 ### Current measured results
 
-| Metric | Result |
-|---|---|
-| Primary settlement entries | 172 |
-| Batches | 10 |
-| Primary planted errors detected | 7 / 7 |
-| Primary false positives | 0 |
-| Held-out records evaluated | 14 |
-| Held-out planted errors detected | 7 / 7 |
-| Held-out precision / recall | 100% / 100% |
-| Unsafe auto-resolutions | 0 |
-| Concurrent duplicate approvals accepted | 0 (verified with genuinely simultaneous requests, not sequential clicks) |
-| Duplicate ingestion events accepted on replay | 0 (rejected by a real database-level uniqueness constraint) |
 
-**The 7/7 result is a regression benchmark against synthetic ground truth, not a claim of production accuracy.** The held-out result exists specifically to make that distinction checkable rather than asserted.
+| Metric                                        | Result      |
+| --------------------------------------------- | ----------- |
+| Primary settlement entries                    | 172         |
+| Batches                                       | 10          |
+| Primary planted errors detected               | 7 / 7       |
+| Primary false positives                       | 0           |
+| Held-out records evaluated                    | 14          |
+| Held-out planted errors detected              | 7 / 7       |
+| Held-out precision / recall                   | 100% / 100% |
+| Unsafe auto-resolutions                       | 0           |
+| Concurrent duplicate approvals accepted       | 0           |
+| Duplicate ingestion events accepted on replay | 0           |
 
-### AI investigation reliability — measured, not assumed
 
-A 42-run benchmark across every exception type found **45.2% of investigations completing autonomously** (a fully or partially verified report) and **54.8% safely escalating to human review** — with **zero** cases where a fabricated or contradicted claim was ever labeled as verified. The benchmark also revealed our hardest case (a multi-order investigation) escalating 86% of the time, frequently exhausting its tool-call budget. Rather than raising that budget, we diagnosed the actual cause — the agent was spending calls discovering evidence rather than investigating it — and redesigned the tool architecture (an upfront case-context tool, a stop condition, per-case investigation objectives) without touching the call limit at all. Re-measured across 10 runs: escalation on that same case dropped from 86% to 20%, with zero budget exhaustion afterward.
+**Important:** the 7/7 and 100%/100% figures are synthetic benchmark results, not production accuracy guarantees. The held-out evaluation exists specifically to distinguish regression testing from a benchmark the system was developed against.
 
-**Our investigator is probabilistic. Our financial truth is not.**
+### AI Investigation Reliability
 
----
+The investigator is probabilistic, so reliability is measured rather than assumed.
 
-## Financial Safety Invariants
+A 42-run benchmark across every exception type found:
 
-1. **AI cannot mutate financial state.** Every investigation tool is read-only.
-2. **Financial calculations are deterministic.** The settlement bridge and reconciliation decisions never depend on a model call.
-3. **AI claims require evidence.** Claims are independently verified against actual tool results before being labeled verified.
-4. **Contradictions block trust.** A contradicted claim cannot satisfy resolution policy or be labeled verified.
-5. **Policy is enforced server-side.** A client cannot bypass the eligibility gate by sending a trusted-looking flag — the server re-checks eligibility itself before honoring any fast-track confirmation.
-6. **Approvals are atomic.** A compare-and-set database operation guarantees only one concurrent request can transition an exception out of "open" — verified with genuinely simultaneous requests, not just sequential clicks.
-7. **Replay is rejected.** Duplicate ingestion is blocked by a real database uniqueness constraint, not an application-level existence check that could be bypassed.
-8. **AI failure degrades safely.** Malformed or failed investigations fall back to human review — never to a financial mutation.
+- **45.2%** completed without requiring human-review fallback
+- **54.8%** safely escalated to human review
+- **0** cases where a fabricated or contradicted claim was labeled verified
 
----
+The hardest case — a multi-order investigation — initially escalated 86% of the time and frequently exhausted its tool-call budget. Rather than simply increasing the budget, the failure mode was diagnosed: **the agent was spending calls discovering evidence instead of investigating it.** The tool architecture was redesigned with an upfront case-context tool, explicit stop conditions, and per-case investigation objectives — the tool-call limit was not increased.
 
-## What We Broke and Fixed
+After redesign, the same case was re-measured across 10 runs: **86% escalation → 20% escalation**, with zero budget exhaustion.
 
-**An evidence-laundering hole.** The AI once computed a number itself — forbidden — passed it into a verification tool as an input, and the tool echoed it back. Our verifier, checking only "did this come from a tool result," would have wrongly certified that self-computed number as grounded evidence. Fixed by excluding a tool's own echoed inputs from what counts as evidence it independently confirmed.
-
-**A race condition in approval.** Sequential double-click protection existed, but two genuinely simultaneous requests could both pass a read-then-write check before either wrote. Fixed with an atomic compare-and-set database operation, verified with real concurrent threads on a file-based database (not `:memory:`, which would have hidden the race by giving each thread its own isolated database).
-
-**Malformed AI tool-call output.** Multi-step investigations occasionally produced structurally invalid output from the model. Fixed with defensive shape validation, a bounded one-time retry, and a safe fallback to human review — never a silent crash or a fabricated result passed through as valid.
-
-**A 100x display bug in the audit trail**, found only in a final, deliberate re-check of the actual numbers rendered on screen (not just that the page loaded). A currency-unit conversion boundary had been missed on one code path. Found before it reached production judging, fixed, and covered by a dedicated regression test.
-
-We expose these because a system that never found anything wrong during its own testing would be a less credible claim than one that found real problems and fixed them.
+> **Our investigator is probabilistic. Our financial truth is not.**
 
 ---
 
-## Why AI, Not Just Deterministic Rules?
+## Adversarial Testing: What We Broke
 
-Deterministic rules are the right tool for establishing financial truth. They are the wrong tool for investigating an ambiguous exception that spans multiple related records — a settlement exception that requires tracing through an order, a refund, a bank narration, and a bridge calculation to form a coherent explanation. The AI chooses what to investigate and synthesizes the relationships; the verifier and policy engine prevent its interpretation from ever becoming financial truth on its own.
+A finance system should be tested against failure, not only demonstrated on the happy path.
 
-**Rules determine what is true. AI helps determine what to investigate and explain.**
+**Evidence-laundering hole.** The AI once computed a number itself, passed it into a verification tool as an input, and the tool echoed it back. A verifier that only checked whether the value appeared in a tool result could have incorrectly certified it as grounded. *Fix: echoed tool inputs are excluded from evidence that the tool independently confirmed.*
+
+**Approval race condition.** Sequential double-click protection was not enough — two genuinely simultaneous requests could both pass a read-then-write check before either committed. *Fix: atomic compare-and-set database transition, verified with genuinely concurrent requests on a file-based database.*
+
+**Malformed AI output.** Multi-step investigations occasionally produced structurally invalid model output. *Fix: validation → one bounded retry → human-review fallback. No malformed output is silently treated as valid.*
+
+**Currency display bug.** A final re-check of the actual numbers rendered on screen exposed a 100× currency-unit display bug caused by a missed conversion boundary. *Fixed and covered by a regression test.*
+
+A system that never finds anything wrong during its own testing is not necessarily a system that was tested well.
+
+---
 
 ## Why Not Fully Automate?
 
-Financial state should not mutate simply because a model is confident. LedgerTrail separates investigation, verification, and resolution authority into three distinct steps. Even when a policy check finds an investigation's evidence completely clean, resolution still requires a human to select their identity and click to confirm — the same identity requirement as any other approval. High-risk or insufficiently evidenced exceptions stay in human review, by design.
+Financial state should not mutate simply because a model is confident. LedgerTrail separates investigation, verification, and resolution authority into three distinct steps. Even when policy finds an investigation's evidence completely clean, a human still selects their identity and confirms the resolution. High-risk or insufficiently evidenced exceptions remain in human review by design.
+
+**Fast-track does not mean AI-authorized.**
 
 ---
 
-## Demo Guide (60 seconds)
+## Demo Scenario
 
-1. **Dashboard** — 172 entries, 10 batches, at a glance.
-2. **Batch 2** — see why an exact bank match can still be unreconciled.
-3. **Batch 9** — run the AI investigation, watch an unsupported claim get rejected.
-4. **Transparency** — the primary benchmark, plus the held-out evaluation, live.
-5. **Audit trail** — the human resolution and its state transition, permanently recorded.
+**Batch 2 — the core reconciliation insight.** The bank amount matches the settlement exactly. Yet the batch remains unreconciled because an unrelated exception is still open. This demonstrates why bank-level agreement is not sufficient evidence of underlying correctness.
 
-**Authentication:** none required. Approver identities shown in the demo (Sneha, Rahul, Priya) are explicitly simulated and disclosed in the UI — not production authentication.
+**Batch 9 — adversarial AI investigation.** The investigation produces a claim that the retrieved evidence contradicts. The verifier rejects the claim and prevents it from satisfying the resolution policy.
+
+**Agent Demo — multi-tool investigation.** A missing-refund case is investigated across related records using multiple read-only tools. The resulting claims are independently verified before being surfaced as trusted facts.
 
 ---
 
 ## Prototype Limitations
 
-- SQLite is used for this deployment; production would use PostgreSQL or an equivalent transactional store.
-- Approver identity is a disclosed, simulated role dropdown, not authenticated RBAC.
-- Settlement, bank, and order data are synthetic — deliberately, so every accuracy claim here is independently checkable rather than requiring trust in unshareable real data.
-- AI investigation reliability is not assumed to be deterministic, and is measured, not asserted, above.
-- The 7/7 and 100%/100% figures are benchmark results against synthetic ground truth, not production accuracy guarantees.
+This is a hackathon prototype, not a production payment system.
+
+- SQLite is used for this deployment. Production would use PostgreSQL or an equivalent transactional store.
+- Approver identities are simulated role selections, not authenticated RBAC.
+- Settlement, bank and order data are synthetic so accuracy claims remain independently checkable.
+- AI investigation reliability is not deterministic and is measured explicitly above.
+- Benchmark results do not establish production accuracy.
+- The deployed demo uses a preconfigured AI environment; production would require proper secret management, observability and operational controls.
 
 These boundaries are intentional and are not represented as production capabilities.
 
@@ -242,35 +350,61 @@ These boundaries are intentional and are not represented as production capabilit
 
 ## What We'd Build Next
 
-- PostgreSQL and a transactional event store
-- Authenticated RBAC / real enterprise identity
-- A larger, longitudinal evaluation set beyond the current benchmark and held-out sizes
-- Investigation observability and ongoing model-quality monitoring
-- Integration with a real settlement/reconciliation data feed
+- PostgreSQL + transactional event store
+- Authenticated RBAC / enterprise identity
+- Larger longitudinal evaluation set
+- Continuous investigation-quality and model monitoring
+- Integration with real settlement/reconciliation data feeds
+
+The goal would be to preserve the same trust boundaries while replacing prototype infrastructure with production infrastructure.
 
 ---
 
 ## Technology Stack
 
-| Layer | Choice |
-|---|---|
-| Frontend | React / Vite |
-| Backend | FastAPI |
-| Database | SQLite (hackathon deployment) |
-| AI | Anthropic Claude (Haiku) |
-| Validation | Pydantic + a deterministic claim verifier |
-| Deployment | Vercel (frontend) + Render (backend) |
 
-Money is represented internally as integer paise, not floating-point values — converted to decimal rupees only at the API response boundary.
+| Layer      | Choice                                  |
+| ---------- | --------------------------------------- |
+| Frontend   | React / Vite                            |
+| Backend    | FastAPI                                 |
+| Database   | SQLite — hackathon deployment           |
+| AI         | Anthropic Claude Haiku                  |
+| Validation | Pydantic + deterministic claim verifier |
+| Deployment | Vercel + Render                         |
+
+
+Money is represented internally as integer paise, not floating-point values, and converted to decimal rupees only at the API response boundary.
 
 ---
 
 ## Repository Structure
 
 ```
-app/            FastAPI backend: matching, bridge, exceptions,
-                anomaly detection, investigation agent, policy engine
-scripts/        Synthetic data generation, ingestion, held-out/hero-case data
-frontend/       React frontend
-tests/          Persisted pytest regression suite
+app/
+  FastAPI backend:
+  matching, bridge, exceptions,
+  anomaly detection, investigation agent,
+  policy engine
+
+scripts/
+  synthetic data generation,
+  ingestion, held-out data,
+  hero-case data
+
+frontend/
+  React frontend
+
+tests/
+  persisted pytest regression suite
+
 ```
+
+---
+
+## The Core Idea
+
+LedgerTrail is not trying to make an LLM the accountant.
+
+It is trying to make an LLM useful to the accountant without allowing the LLM to become the source of financial truth.
+
+**AI investigates. Deterministic systems decide. Humans retain control.**
