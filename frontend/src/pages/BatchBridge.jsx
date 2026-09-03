@@ -100,7 +100,7 @@ export default function BatchBridge() {
   return (
     <div>
       <Link
-        to="/"
+        to="/batches"
         className="text-sm font-medium text-brass no-underline hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-forest"
       >
         ← All batches

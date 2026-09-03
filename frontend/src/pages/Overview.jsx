@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getBatches, getDataSources, getStats } from '../api'
-import MiniBridge from '../components/MiniBridge'
-import StatusBanner from '../components/StatusBanner'
+import { getStats } from '../api'
 import Amount from '../components/Amount'
-import { formatClassification, formatDate } from '../lib/format'
+import { formatClassification } from '../lib/format'
 
 const SEVERITY_STYLES = {
   high: 'bg-rust-wash text-rust',
@@ -13,25 +11,16 @@ const SEVERITY_STYLES = {
   info: 'bg-rule/60 text-ink-muted',
 }
 
-export default function Dashboard() {
-  const [batches, setBatches] = useState([])
+export default function Overview() {
   const [stats, setStats] = useState(null)
-  const [dataSources, setDataSources] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([
-      getBatches(),
-      getStats().catch(() => null),
-      getDataSources().catch(() => null),
-    ])
-      .then(([batchData, statsData, sourcesData]) => {
-        if (cancelled) return
-        setBatches(batchData)
-        setStats(statsData)
-        setDataSources(sourcesData)
+    getStats()
+      .then((statsData) => {
+        if (!cancelled) setStats(statsData)
       })
       .catch((err) => {
         if (!cancelled) setError(err.message)
@@ -65,40 +54,6 @@ export default function Dashboard() {
 
       {stats ? <AttentionMetrics stats={stats} /> : null}
       {stats ? <NeedsAttentionTable stats={stats} /> : null}
-
-      <h2 className="mb-3 mt-10 text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-muted">
-        All batches
-      </h2>
-      <ul className="space-y-4">
-        {batches.map((batch) => (
-          <li key={batch.id}>
-            <Link
-              to={`/batches/${batch.id}`}
-              className="block rounded-sm border border-rule bg-paper-raised no-underline shadow-[0_1px_0_rgba(22,20,16,0.04)] transition hover:border-ink/30 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-forest"
-            >
-              <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule px-5 py-3">
-                <div className="flex items-baseline gap-3">
-                  <span className="font-serif text-2xl text-ink">Batch {String(batch.id).padStart(2, '0')}</span>
-                  <span className="text-sm text-ink-muted">{formatDate(batch.settlement_date)}</span>
-                </div>
-                <span className="text-sm text-brass">Open bridge →</span>
-              </div>
-              <div className="space-y-4 px-5 py-4">
-                <StatusBanner batch={batch} />
-                <MiniBridge batch={batch} />
-                <p className="text-sm text-ink-muted">
-                  Bank{' '}
-                  <Amount value={batch.matched_bank_amount} className="text-ink" />
-                  <span className="mx-2 text-rule">·</span>
-                  Variance <Amount value={batch.variance} className="text-ink" />
-                </p>
-              </div>
-            </Link>
-          </li>
-        ))}
-      </ul>
-
-      {dataSources ? <DataSourcesPanel data={dataSources} /> : null}
     </div>
   )
 }
@@ -187,43 +142,6 @@ function NeedsAttentionTable({ stats }) {
           ))}
         </tbody>
       </table>
-    </section>
-  )
-}
-
-function DataSourcesPanel({ data }) {
-  const sources = data.sources ?? []
-  if (sources.length === 0 && !data.note) return null
-
-  return (
-    <section className="mt-10 border border-rule bg-paper-raised">
-      <header className="border-b border-rule px-5 py-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-muted">
-          Data sources
-        </p>
-      </header>
-      <ul className="grid gap-px bg-rule sm:grid-cols-3">
-        {sources.map((source) => (
-          <li key={source.name} className="bg-paper-raised px-5 py-4">
-            <p className="font-serif text-xl tracking-tight text-ink">{source.name}</p>
-            <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
-              {source.format}
-            </p>
-            <p className="mt-3 font-serif text-2xl leading-none text-ink">
-              {Number(source.record_count).toLocaleString('en-IN')}
-            </p>
-            <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
-              Records
-            </p>
-            <p className="mt-3 text-sm leading-relaxed text-ink-muted">{source.description}</p>
-          </li>
-        ))}
-      </ul>
-      {data.note ? (
-        <p className="border-t border-dashed border-brass/70 bg-amber-wash px-5 py-3 text-sm leading-relaxed text-ink">
-          {data.note}
-        </p>
-      ) : null}
     </section>
   )
 }

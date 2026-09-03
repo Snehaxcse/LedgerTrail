@@ -5,9 +5,10 @@ import AgentDemo from './pages/AgentDemo'
 import AuditTrail from './pages/AuditTrail'
 import BankStatement from './pages/BankStatement'
 import BatchBridge from './pages/BatchBridge'
-import Dashboard from './pages/Dashboard'
+import Batches from './pages/Batches'
 import IngestionDemo from './pages/IngestionDemo'
 import Login from './pages/Login'
+import Overview from './pages/Overview'
 import Trend from './pages/Trend'
 import Transparency from './pages/Transparency'
 
@@ -20,7 +21,8 @@ function AuthGate() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<Overview />} />
+        <Route path="/batches" element={<Batches />} />
         <Route path="/batches/:id" element={<BatchBridge />} />
         <Route path="/bank-statement" element={<BankStatement />} />
         <Route path="/trend" element={<Trend />} />
