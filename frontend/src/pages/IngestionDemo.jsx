@@ -35,9 +35,9 @@ export default function IngestionDemo() {
       <h1 className="mt-1 font-serif text-4xl tracking-tight text-ink">Ingestion demo</h1>
       <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-muted">
         Not a live Razorpay integration — a Razorpay-compatible ingestion adapter fed a fixed
-        synthetic settlement event, wired to the real backend and the real database. Every source
-        event carries a <code className="font-mono text-xs">source_event_id</code>, unique at the
-        database level: replaying the same event never creates a second batch.
+        synthetic settlement event, wired to the real backend and the real database. Every
+        settlement event carries a unique identifier, enforced by the database itself — replaying
+        the same event never creates a second batch.
       </p>
 
       <section className="mt-6 max-w-2xl rounded-sm border border-rule bg-paper-raised px-6 py-6">
