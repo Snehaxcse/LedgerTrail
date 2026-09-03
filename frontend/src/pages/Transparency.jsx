@@ -92,7 +92,7 @@ export default function Transparency() {
       <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brass">Accuracy</p>
       <h1 className="mt-1 font-serif text-4xl tracking-tight text-ink">Transparency</h1>
       <p className="mt-2 max-w-2xl text-ink-muted">
-        Planted errors from the synthetic dataset compared with exceptions the engine recorded.
+        Measured reconciliation performance, held-out evaluation, and system safety boundaries.
       </p>
 
       <SystemSafetySummary />

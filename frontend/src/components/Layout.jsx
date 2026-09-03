@@ -54,25 +54,32 @@ export default function Layout({ children }) {
           </Link>
           <nav className="flex flex-wrap items-center gap-x-5 gap-y-1">
             <NavLink to="/" end className={navClass}>
+              Overview
+            </NavLink>
+            <NavLink to="/" end className={navClass}>
               Batches
             </NavLink>
             <NavLink to="/bank-statement" className={navClass}>
               Bank statement
             </NavLink>
-            <NavLink to="/trend" className={navClass}>
-              Over time
+            <NavLink to="/audit" className={navClass}>
+              Audit trail
             </NavLink>
             <NavLink to="/transparency" className={navClass}>
               Transparency
             </NavLink>
+            {/* "Demos" grouping (Agent demo / Ingestion demo / Over time) left flat
+                rather than collapsed into a dropdown -- this close to submission, a
+                dropdown's extra state/focus/click-outside handling isn't worth the
+                risk for a purely cosmetic grouping. */}
             <NavLink to="/agent-demo" className={navClass}>
               Agent demo
             </NavLink>
             <NavLink to="/ingestion-demo" className={navClass}>
               Ingestion demo
             </NavLink>
-            <NavLink to="/audit" className={navClass}>
-              Audit trail
+            <NavLink to="/trend" className={navClass}>
+              Over time
             </NavLink>
           </nav>
           <AccountBadge />
