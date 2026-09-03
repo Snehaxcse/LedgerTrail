@@ -309,17 +309,35 @@ def _log_exception_created(db, classification, unexplained_amount, requires_appr
     )
 
 
-def classify_exceptions(db: Session) -> List[ExceptionResult]:
+def classify_exceptions(db: Session, batch_ids: Optional[List[int]] = None) -> List[ExceptionResult]:
+    """batch_ids: when given, only wipes/reclassifies THOSE batches -- every other
+    batch's existing ExceptionRecord rows (including their status, e.g. an already
+    "approved" exception, and their cached investigation_result) are left completely
+    untouched. Used by the live Razorpay ingestion path (app/razorpay_ingestion.py) so
+    ingesting one new event can never destroy the primary dataset's existing exception/
+    approval/investigation state. Default (None) is the original full-regen behavior,
+    unchanged -- still what app/startup.py, scripts/run_reconciliation.py, and
+    app/holdout_sandbox.py all call."""
     # Wipe previous exception rows so this function is safely re-runnable.
     # AuditEvent is NEVER touched here -- it is an append-only audit log.
-    db.query(models.ExceptionRecord).delete()
+    exc_query = db.query(models.ExceptionRecord)
+    if batch_ids is not None:
+        exc_query = exc_query.filter(models.ExceptionRecord.batch_id.in_(batch_ids))
+    exc_query.delete(synchronize_session=False)
     db.commit()
 
-    bridge_by_batch = {r.batch_id: r for r in bridge.compute_bridge(db)}
-    match_by_batch = {m.settlement_batch_id: m for m in db.query(models.Match).all()}
+    bridge_by_batch = {r.batch_id: r for r in bridge.compute_bridge(db, batch_ids)}
+    match_query = db.query(models.Match)
+    if batch_ids is not None:
+        match_query = match_query.filter(models.Match.settlement_batch_id.in_(batch_ids))
+    match_by_batch = {m.settlement_batch_id: m for m in match_query.all()}
+
+    batch_query = db.query(models.SettlementBatch).order_by(models.SettlementBatch.id)
+    if batch_ids is not None:
+        batch_query = batch_query.filter(models.SettlementBatch.id.in_(batch_ids))
 
     results = []
-    for batch in db.query(models.SettlementBatch).order_by(models.SettlementBatch.id).all():
+    for batch in batch_query.all():
         br = bridge_by_batch[batch.id]
         match_row = match_by_batch.get(batch.id)
 

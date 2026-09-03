@@ -7,19 +7,18 @@ import Amount from '../components/Amount'
 import ExceptionQueue from '../components/ExceptionQueue'
 import SimulatedNotice from '../components/SimulatedNotice'
 import StatusBanner from '../components/StatusBanner'
+import { useAuth } from '../lib/AuthContext'
 import { formatClassification, formatDate } from '../lib/format'
-
-const APPROVER_KEY = 'ledgertrail.approver'
 
 export default function BatchBridge() {
   const { id } = useParams()
+  const { user } = useAuth()
   const [batch, setBatch] = useState(null)
   const [exceptions, setExceptions] = useState([])
   const [error, setError] = useState(null)
   const [reviewError, setReviewError] = useState(null)
   const [loading, setLoading] = useState(true)
   const [pendingId, setPendingId] = useState(null)
-  const [approver, setApprover] = useState(() => sessionStorage.getItem(APPROVER_KEY) || '')
   const [reasons, setReasons] = useState({})
   const [notice, setNotice] = useState(null)
   const dismissNotice = useCallback(() => setNotice(null), [])
@@ -48,11 +47,6 @@ export default function BatchBridge() {
     }
   }, [id])
 
-  function handleApproverChange(value) {
-    setApprover(value)
-    sessionStorage.setItem(APPROVER_KEY, value)
-  }
-
   function handleReasonChange(exceptionId, value) {
     setReasons((current) => ({ ...current, [exceptionId]: value }))
   }
@@ -67,8 +61,7 @@ export default function BatchBridge() {
   }
 
   async function handleReview(exceptionId, decision, reason, resolutionMethod) {
-    const name = approver.trim()
-    if (!name || pendingId != null) return
+    if (user?.role !== 'approver' || pendingId != null) return
     if (decision === 'rejected' && !String(reason ?? '').trim()) return
 
     setPendingId(exceptionId)
@@ -76,7 +69,6 @@ export default function BatchBridge() {
     const reviewed = exceptions.find((row) => row.id === exceptionId)
     try {
       await reviewException(exceptionId, {
-        approver: name,
         decision,
         reason: decision === 'rejected' ? String(reason).trim() : undefined,
         resolutionMethod,
@@ -95,6 +87,8 @@ export default function BatchBridge() {
         } catch {
           // Keep the already-resolved copy even if the refresh fails.
         }
+      } else if (err.status === 403) {
+        setReviewError('Only an Approver can approve or reject exceptions.')
       } else {
         setReviewError(err.message)
       }
@@ -136,8 +130,6 @@ export default function BatchBridge() {
           <ExceptionQueue
             batchId={batch.id}
             exceptions={exceptions}
-            approver={approver}
-            onApproverChange={handleApproverChange}
             reasons={reasons}
             onReasonChange={handleReasonChange}
             onReview={handleReview}

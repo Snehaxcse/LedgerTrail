@@ -179,6 +179,12 @@ def load_into_db(batch_rows, settlement_rows, bank_rows, order_rows):
     try:
         # AuditEvent is deliberately excluded from this wipe: it is an append-only
         # audit log and must never be updated or deleted, even on re-ingestion.
+        # IngestedEvent is wiped for the same reason ApprovalLog is: it FK-references
+        # SettlementBatch ids, which are recreated (reassigned) by this same function --
+        # leaving stale rows here would let a live-ingested demo batch's IngestedEvent
+        # row survive a regen while the batch it points to is gone, permanently stuck
+        # reporting "duplicate" for a batch that no longer exists.
+        db.query(models.IngestedEvent).delete()
         db.query(models.ApprovalLog).delete()
         db.query(models.ExceptionRecord).delete()
         db.query(models.Match).delete()

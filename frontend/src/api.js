@@ -7,14 +7,53 @@ export class ApiError extends Error {
 }
 
 const API_BASE = String(import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '') || '/api'
+const TOKEN_STORAGE_KEY = 'ledgertrail_session_token'
 
-async function api(path, options) {
-  const response = await fetch(`${API_BASE}${path}`, options)
+export function getStoredToken() {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function setStoredToken(token) {
+  try {
+    if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token)
+    else localStorage.removeItem(TOKEN_STORAGE_KEY)
+  } catch {
+    // Storage unavailable (e.g. private browsing) -- session just won't
+    // survive a refresh; not fatal to the current tab.
+  }
+}
+
+async function api(path, options = {}) {
+  const token = getStoredToken()
+  const headers = { ...(options.headers || {}) }
+  if (token) headers.Authorization = `Bearer ${token}`
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers })
   if (!response.ok) {
     const detail = await response.text()
     throw new ApiError(detail || `Request failed (${response.status})`, response.status)
   }
+  if (response.status === 204) return null
   return response.json()
+}
+
+export function login(username, password) {
+  return api('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export function logout() {
+  return api('/auth/logout', { method: 'POST' })
+}
+
+export function getMe() {
+  return api('/auth/me')
 }
 
 export function getBatches() {
@@ -37,8 +76,11 @@ export function getExceptionEvidence(batchId, exceptionId) {
   return api(`/batches/${batchId}/exceptions/${exceptionId}/evidence`)
 }
 
-export function reviewException(id, { approver, decision, reason, resolutionMethod }) {
-  const body = { approver, decision }
+export function reviewException(id, { decision, reason, resolutionMethod }) {
+  // No approver field: the real endpoint derives the actor from the
+  // authenticated session (Authorization header, attached above), never
+  // from the request body -- see app/auth.py.
+  const body = { decision }
   if (reason != null && reason !== '') {
     body.reason = reason
   }
@@ -98,6 +140,10 @@ export function getHeroCase() {
 
 export function investigateHeroCase() {
   return api('/demo/hero-case/investigate')
+}
+
+export function replayRazorpaySettlement() {
+  return api('/demo/razorpay-ingestion/replay', { method: 'POST' })
 }
 
 export function runHoldoutIdempotencyCheck() {

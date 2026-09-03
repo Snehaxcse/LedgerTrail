@@ -23,14 +23,14 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from app import bridge, demo_cache, models, policy
+from app import auth, bridge, demo_cache, models, policy
 from app.ai_explain import generate_explanation
 from app.anomaly_detection import ANOMALY_CLASSIFICATIONS
 from app.database import get_db, ensure_schema
@@ -52,6 +52,7 @@ from app.matching import match_basis as _match_basis
 from app.money import paise_to_rupees
 from app.narration_verification import verify_narration
 from app.nl_query import answer_query
+from app.razorpay_ingestion import DEMO_REPLAY_PAYLOAD, ingest_razorpay_event
 from app.startup import run_investigation_prewarming, run_startup_sequence
 
 # Without this, "ledgertrail.ai_explain"'s path=ai_generated/path=fallback logs
@@ -243,12 +244,19 @@ class AnomalyEvidenceOut(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    approver: str = Field(
-        description="Must be one of the fixed demo names in GET /approvers -- checked "
-        "server-side, rejected otherwise (see approve_exception). Still not real "
-        "authentication: picking a name from a list proves nothing about who is "
-        "actually calling this endpoint, it just closes the 'type literally anything' "
-        "gap of a free-text field. Recorded as-is in ApprovalLog/AuditEvent."
+    # Optional and IGNORED by the real POST /exceptions/{id}/approve endpoint --
+    # actor identity there comes from the authenticated session (app/auth.py),
+    # never from the request body (see approve_exception / _approve_exception_core's
+    # docstrings). This field still exists, and is still required in practice, only
+    # for the UNRELATED holdout-sandbox approval-race demo (holdout_sandbox_approve),
+    # which has no real login and still uses the original "pick a name off
+    # DEMO_APPROVERS" simulated-identity mechanism.
+    approver: Optional[str] = Field(
+        default=None,
+        description="Used ONLY by the held-out sandbox's approval-race demo, which has "
+        "no real authentication -- picking a name from DEMO_APPROVERS there proves "
+        "nothing about who is actually calling it. The real approve endpoint ignores "
+        "this field entirely and derives the actor from the caller's session instead."
     )
     decision: Literal["approved", "rejected"]
     reason: Optional[str] = None
@@ -425,6 +433,22 @@ class TimeSavedEstimate(BaseModel):
     estimated_hours_saved: float
 
 
+class NeedsAttentionRow(BaseModel):
+    exception_id: int
+    batch_id: int
+    classification: str
+    unexplained_amount: float
+    severity: Optional[str]
+    # Days since the BATCH's settlement_date -- real business data, not a demo
+    # artifact. Deliberately NOT "time since this ExceptionRecord row was
+    # created": every exception is recreated fresh at boot (classify_exceptions
+    # wipes and reclassifies on every regen -- see CLAUDE.md), so a row's own
+    # created_at would only ever read "seconds old", which would misrepresent
+    # how long the underlying settlement has actually been sitting unresolved.
+    age_days: int
+    suggested_action: Optional[str]
+
+
 class StatsResponse(BaseModel):
     total_batches: int
     total_settlement_entries: int = Field(
@@ -448,6 +472,30 @@ class StatsResponse(BaseModel):
         "planted cases; reuses _batch_summary's actual is_reconciled logic rather than a "
         "separate computation, so this stays meaningful (not a tautological always-0) if "
         "that logic ever changes."
+    )
+    amount_at_risk: float = Field(
+        description="Sum of unexplained_amount across every OPEN exception where "
+        "requires_approval=True -- rupees still unaccounted for pending a human decision."
+    )
+    exceptions_needing_review: int = Field(
+        description="COUNT of open, requires_approval=True exceptions -- the EXCEPTION-level "
+        "count, not batches_requiring_review's BATCH-level count (a batch can carry more "
+        "than one exception)."
+    )
+    oldest_unresolved_days: Optional[int] = Field(
+        description="Max age_days (see NeedsAttentionRow) among open, requires_approval=True "
+        "exceptions. None if there are none."
+    )
+    ai_investigated_count: int = Field(
+        description="COUNT of exceptions (any status) with a cached investigation_result -- "
+        "how many have actually been run through the AI investigation agent, not how many "
+        "COULD be. Secondary/optional metric, included because it's honestly computable "
+        "from an existing column, not because a new AI call was made to produce it."
+    )
+    needs_attention: List[NeedsAttentionRow] = Field(
+        description="Open, requires_approval=True exceptions, sorted by severity (high "
+        "first), then amount descending, then age descending -- the dashboard's "
+        "'what needs attention right now' table."
     )
     time_saved: TimeSavedEstimate
 
@@ -635,11 +683,67 @@ def health():
     return {"status": "ok"}
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    username: str
+    role: str
+    display_name: str
+    job_title: str
+
+
+class MeResponse(BaseModel):
+    username: str
+    role: str
+    display_name: str
+    job_title: str
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+def login(body: LoginRequest, db: Session = Depends(get_db)):
+    """Synthetic demo credentials only (see app/auth.py's DEMO_CREDENTIALS) --
+    same 401 for "no such user" and "wrong password", so a caller can't use
+    this endpoint to enumerate valid usernames."""
+    user = db.query(models.DemoUser).filter(models.DemoUser.username == body.username.strip().lower()).first()
+    if user is None or not auth.verify_password(body.password, user.password_hash, user.password_salt):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    token = auth.create_session(db, user)
+    return LoginResponse(
+        token=token, username=user.username, role=user.role,
+        display_name=user.display_name, job_title=user.job_title,
+    )
+
+
+@app.post("/auth/logout", status_code=204)
+def logout(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[len("Bearer "):].strip()
+        db.query(models.UserSession).filter(models.UserSession.token == token).delete()
+        db.commit()
+    return Response(status_code=204)
+
+
+@app.get("/auth/me", response_model=MeResponse)
+def me(current_user: auth.AuthenticatedUser = Depends(auth.get_current_user)):
+    return MeResponse(
+        username=current_user.username, role=current_user.role,
+        display_name=current_user.display_name, job_title=current_user.job_title,
+    )
+
+
 @app.get("/approvers", response_model=List[DemoApproverOut])
 def list_approvers():
-    """The fixed list POST /exceptions/{id}/approve validates body.approver against
-    (see DEMO_APPROVERS). The frontend's dropdown is populated from this endpoint
-    rather than keeping its own hardcoded copy, so the two can't drift apart."""
+    """The fixed list the held-out sandbox's approval-race demo validates its own
+    simulated approver picker against (see DEMO_APPROVERS and
+    holdout_sandbox_approve) -- unrelated to real login now that POST
+    /exceptions/{id}/approve requires an authenticated "approver"-role session
+    (app/auth.py) instead of a client-supplied name. Kept for that sandbox demo's
+    UI, which is populated from this endpoint rather than keeping its own
+    hardcoded copy."""
     return [DemoApproverOut(name=name, role=role) for name, role in DEMO_APPROVERS.items()]
 
 
@@ -742,13 +846,13 @@ def verify_bank_transaction_narration(bank_transaction_id: int, db: Session = De
 
 
 @app.get("/batches", response_model=List[BatchSummary])
-def list_batches(db: Session = Depends(get_db)):
+def list_batches(db: Session = Depends(get_db), current_user: auth.AuthenticatedUser = Depends(auth.get_current_user)):
     batches = db.query(models.SettlementBatch).order_by(models.SettlementBatch.id).all()
     return [_batch_summary(db, b) for b in batches]
 
 
 @app.get("/batches/{batch_id}", response_model=BatchDetail)
-def get_batch(batch_id: int, db: Session = Depends(get_db)):
+def get_batch(batch_id: int, db: Session = Depends(get_db), current_user: auth.AuthenticatedUser = Depends(auth.get_current_user)):
     batch = _get_batch_or_404(db, batch_id)
     summary = _batch_summary(db, batch)
     entries = (
@@ -765,7 +869,7 @@ def get_batch(batch_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/batches/{batch_id}/exceptions", response_model=List[ExceptionOut])
-def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db)):
+def get_batch_exceptions(batch_id: int, db: Session = Depends(get_db), current_user: auth.AuthenticatedUser = Depends(auth.get_current_user)):
     _get_batch_or_404(db, batch_id)
     rows = (
         db.query(models.ExceptionRecord)
@@ -890,7 +994,10 @@ def get_batch_evidence(batch_id: int, db: Session = Depends(get_db)):
     "/batches/{batch_id}/exceptions/{exception_id}/evidence",
     response_model=Union[AnomalyEvidenceOut, EvidenceOut],
 )
-def get_exception_evidence(batch_id: int, exception_id: int, db: Session = Depends(get_db)):
+def get_exception_evidence(
+    batch_id: int, exception_id: int, db: Session = Depends(get_db),
+    current_user: auth.AuthenticatedUser = Depends(auth.get_current_user),
+):
     """Scoped to this ONE exception's own linked_evidence_ids only -- unlike
     GET /batches/{batch_id}/evidence, which aggregates across every exception on
     the batch. Same scoping principle already used by /explain.
@@ -911,7 +1018,9 @@ def get_exception_evidence(batch_id: int, exception_id: int, db: Session = Depen
     return _resolve_evidence(db, entry_ids, order_ids, bank_ids)
 
 
-def _approve_exception_core(db: Session, exception_id: int, body: ApprovalRequest) -> ApprovalResponse:
+def _approve_exception_core(
+    db: Session, exception_id: int, body: ApprovalRequest, *, actor: str, validate_actor: bool = True
+) -> ApprovalResponse:
     """The actual compare-and-set approval logic -- extracted so both the
     real POST /exceptions/{id}/approve endpoint AND the held-out sandbox's
     approval-race demo (app/holdout_sandbox.py) call the IDENTICAL
@@ -919,13 +1028,21 @@ def _approve_exception_core(db: Session, exception_id: int, body: ApprovalReques
     the real endpoint does: the demo is only meaningful proof if it's
     provably running the same code, not a lookalike.
 
-    SIMULATED OPERATOR IDENTITY: body.approver must be one of the fixed names in
-    DEMO_APPROVERS (validated below) -- there is still no login/session/token behind
-    it, so this only proves the caller picked a name off a list, not who they actually
-    are. It's recorded verbatim into ApprovalLog and AuditEvent as that simulated
-    identity, same as the frontend's own "Simulated" approve/reject copy already
-    tells the user. This is a demo-scope limitation, documented here rather than
-    fixed -- see ApprovalRequest.approver's own description too.
+    IDENTITY: `actor` is the ONLY source of who gets recorded in
+    ApprovalLog/AuditEvent -- never body.approver directly. The two real-world
+    call sites resolve it very differently, which is exactly why this
+    function takes an already-resolved string rather than deciding for
+    itself:
+      - The real endpoint (approve_exception) resolves actor from
+        current_user.display_name via app.auth's Depends(require_approver) --
+        a real, server-derived, role-checked identity from a session token.
+        validate_actor=False there: DEMO_APPROVERS membership is irrelevant
+        once real auth has already vouched for the caller.
+      - The holdout-sandbox demo (holdout_sandbox_approve) still has no real
+        auth -- it's a self-contained demo of the CONCURRENCY/atomicity
+        mechanism, unrelated to RBAC -- and passes actor=body.approver with
+        validate_actor=True, preserving its exact original "simulated
+        identity" behavior (a name picked off DEMO_APPROVERS, nothing more).
 
     CONCURRENCY: the open->approved/rejected transition is a compare-and-set UPDATE
     (below), not a read-then-write -- two genuinely simultaneous requests for the
@@ -937,11 +1054,11 @@ def _approve_exception_core(db: Session, exception_id: int, body: ApprovalReques
     if exc is None:
         raise HTTPException(status_code=404, detail=f"ExceptionRecord {exception_id} not found")
 
-    if body.approver not in DEMO_APPROVERS:
+    if validate_actor and actor not in DEMO_APPROVERS:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"'{body.approver}' is not a recognized demo approver. "
+                f"'{actor}' is not a recognized demo approver. "
                 f"Valid names: {', '.join(DEMO_APPROVERS)}."
             ),
         )
@@ -1010,7 +1127,7 @@ def _approve_exception_core(db: Session, exception_id: int, body: ApprovalReques
     )
     approval_log = models.ApprovalLog(
         exception_id=exception_id,
-        approver=body.approver,
+        approver=actor,
         decision=body.decision,
         reason=reason,
         timestamp=datetime.datetime.now(),
@@ -1037,7 +1154,7 @@ def _approve_exception_core(db: Session, exception_id: int, body: ApprovalReques
                 {
                     "exception_id": exception_id,
                     "status": body.decision,
-                    "approver": body.approver,
+                    "approver": actor,
                     "decision": body.decision,
                     "reason": reason,
                     "resolution_method": body.resolution_method,
@@ -1058,12 +1175,26 @@ def _approve_exception_core(db: Session, exception_id: int, body: ApprovalReques
 
 
 @app.post("/exceptions/{exception_id}/approve", response_model=ApprovalResponse)
-def approve_exception(exception_id: int, body: ApprovalRequest, db: Session = Depends(get_db)):
-    return _approve_exception_core(db, exception_id, body)
+def approve_exception(
+    exception_id: int,
+    body: ApprovalRequest,
+    db: Session = Depends(get_db),
+    current_user: auth.AuthenticatedUser = Depends(auth.require_approver),
+):
+    """403 (not 400/401) for a logged-in analyst -- require_approver runs
+    AFTER get_current_user, so an unauthenticated caller gets 401 and an
+    authenticated-but-wrong-role caller gets 403, distinct failure modes.
+    actor is current_user.display_name -- server-derived from the session,
+    never body.approver (see ApprovalRequest.approver's own description:
+    that field only still exists for the unrelated holdout-sandbox demo)."""
+    return _approve_exception_core(db, exception_id, body, actor=current_user.display_name, validate_actor=False)
 
 
 @app.get("/audit-trail", response_model=AuditTrailResponse)
-def get_audit_trail(limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
+def get_audit_trail(
+    limit: int = 50, offset: int = 0, db: Session = Depends(get_db),
+    current_user: auth.AuthenticatedUser = Depends(auth.get_current_user),
+):
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
 
@@ -1080,7 +1211,7 @@ def get_audit_trail(limit: int = 50, offset: int = 0, db: Session = Depends(get_
 
 
 @app.get("/transparency", response_model=TransparencyResponse)
-def get_transparency(db: Session = Depends(get_db)):
+def get_transparency(db: Session = Depends(get_db), current_user: auth.AuthenticatedUser = Depends(auth.get_current_user)):
     """Compares the synthetic dataset's planted errors (ground_truth.json) against
     what the classification engine actually recorded in ExceptionRecord right now.
     Both sides are read fresh on every call -- nothing here is cached or hardcoded,
@@ -1264,13 +1395,13 @@ def holdout_sandbox_approve(sandbox_id: str, body: SandboxApproveRequest):
         raise HTTPException(status_code=404, detail="Sandbox not found or expired.")
     try:
         approval_body = ApprovalRequest(approver=body.approver, decision=body.decision, reason=body.reason)
-        return _approve_exception_core(db, body.exception_id, approval_body)
+        return _approve_exception_core(db, body.exception_id, approval_body, actor=body.approver, validate_actor=True)
     finally:
         db.close()
 
 
 @app.get("/stats", response_model=StatsResponse)
-def get_stats(db: Session = Depends(get_db)):
+def get_stats(db: Session = Depends(get_db), current_user: auth.AuthenticatedUser = Depends(auth.get_current_user)):
     """Rollup numbers for the current classification pass. "Reconciled automatically"
     / "requires review" reflect ExceptionRecord rows as they stand RIGHT NOW (any
     status) -- there's no accumulated history of past passes to check against, since
@@ -1295,6 +1426,9 @@ def get_stats(db: Session = Depends(get_db)):
     unsafe_auto_resolutions = 0
     open_exceptions = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.status == "open").all()
     batches_by_id = {b.id: b for b in db.query(models.SettlementBatch).all()}
+    today = datetime.date.today()
+    amount_at_risk_paise = 0
+    needs_attention_rows = []
     for exc in open_exceptions:
         if not CLASSIFICATION_INFO.get(exc.classification, {}).get("requires_approval", True):
             continue
@@ -1302,12 +1436,44 @@ def get_stats(db: Session = Depends(get_db)):
         if batch is not None and _batch_summary(db, batch).is_reconciled:
             unsafe_auto_resolutions += 1
 
+        amount_at_risk_paise += exc.unexplained_amount
+        # max(0, ...): the synthetic dataset's settlement dates aren't pinned to
+        # "today" -- some sort after it. A settlement that hasn't happened yet by
+        # the clock's reckoning hasn't aged negatively, it just hasn't aged (0),
+        # so this never displays a nonsensical "-49 days".
+        age_days = max(0, (today - batch.settlement_date).days) if batch is not None else 0
+        needs_attention_rows.append(NeedsAttentionRow(
+            exception_id=exc.id,
+            batch_id=exc.batch_id,
+            classification=exc.classification,
+            unexplained_amount=paise_to_rupees(exc.unexplained_amount),
+            severity=exc.severity,
+            age_days=age_days,
+            suggested_action=exc.suggested_action,
+        ))
+
+    severity_rank = {"high": 0, "medium": 1, "low": 2, "info": 3}
+    needs_attention_rows.sort(
+        key=lambda r: (severity_rank.get(r.severity, 99), -r.unexplained_amount, -r.age_days)
+    )
+
+    ai_investigated_count = (
+        db.query(models.ExceptionRecord)
+        .filter(models.ExceptionRecord.investigation_result.isnot(None))
+        .count()
+    )
+
     return StatsResponse(
         total_batches=total_batches,
         total_settlement_entries=total_settlement_entries,
         batches_reconciled_automatically=batches_reconciled_automatically,
         batches_requiring_review=batches_requiring_review,
         unsafe_auto_resolutions=unsafe_auto_resolutions,
+        amount_at_risk=paise_to_rupees(amount_at_risk_paise),
+        exceptions_needing_review=len(needs_attention_rows),
+        oldest_unresolved_days=max((r.age_days for r in needs_attention_rows), default=None),
+        ai_investigated_count=ai_investigated_count,
+        needs_attention=needs_attention_rows,
         time_saved=TimeSavedEstimate(
             assumption=(
                 f"Assumes ~{TIME_SAVED_MINUTES_PER_EXCEPTION:.0f} minutes of manual "
@@ -1324,7 +1490,10 @@ def get_stats(db: Session = Depends(get_db)):
 
 
 @app.get("/batches/{batch_id}/exceptions/{exception_id}/explain", response_model=ExplainResponse)
-def explain_exception(batch_id: int, exception_id: int, db: Session = Depends(get_db)):
+def explain_exception(
+    batch_id: int, exception_id: int, db: Session = Depends(get_db),
+    current_user: auth.AuthenticatedUser = Depends(auth.get_current_user),
+):
     _get_batch_or_404(db, batch_id)
     exc = _get_exception_or_404(db, batch_id, exception_id)
 
@@ -1372,7 +1541,10 @@ def _investigation_out(result, cached: bool) -> InvestigationOut:
     "/batches/{batch_id}/exceptions/{exception_id}/investigate",
     response_model=InvestigationOut,
 )
-def investigate_exception_endpoint(batch_id: int, exception_id: int, db: Session = Depends(get_db)):
+def investigate_exception_endpoint(
+    batch_id: int, exception_id: int, db: Session = Depends(get_db),
+    current_user: auth.AuthenticatedUser = Depends(auth.get_current_user),
+):
     """On-demand only -- never runs automatically, same as /explain. Real
     Anthropic tool-use investigation (app.investigation_agent), several calls
     deep, so this is genuinely slow (seconds, not instant) -- cached in the DB
@@ -1483,6 +1655,57 @@ def investigate_hero_case_demo():
         return out
     finally:
         db.close()
+
+
+class RazorpayIngestionOut(BaseModel):
+    duplicate: bool
+    source_event_id: str
+    batch_id: int
+    validated: bool
+    normalized: bool
+    ingested: bool
+    reconciled: bool
+    exceptions_created: List[str]
+    message: str
+
+
+@app.post("/demo/razorpay-ingestion/replay", response_model=RazorpayIngestionOut)
+def replay_razorpay_settlement(db: Session = Depends(get_db)):
+    """Judge-facing "Replay Razorpay settlement" action -- a REAL call into
+    app.razorpay_ingestion.ingest_razorpay_event against the real
+    ledgertrail.db, always with the same fixed demo payload
+    (source_event_id="event_razorpay_001"). Not a live Razorpay
+    integration: this is a Razorpay-compatible ingestion adapter fed a fixed
+    synthetic payload, not a webhook receiver.
+
+    First click: a genuinely new batch is created and run through the
+    existing (batch-scoped) reconciliation engine -- ingested=True. Second
+    (and every subsequent) click: the DB-level unique constraint on
+    IngestedEvent.source_event_id rejects it -- duplicate=True, the ORIGINAL
+    batch_id is returned, and zero new batch/entry/bank-transaction/exception
+    rows are created. See app/razorpay_ingestion.py's module docstring for
+    the full idempotency mechanism."""
+    result = ingest_razorpay_event(db, DEMO_REPLAY_PAYLOAD)
+    if result.duplicate:
+        message = "DUPLICATE EVENT — Already processed. No duplicate financial state created."
+    elif result.reconciled:
+        message = "Validated, normalized, ingested, and reconciled — batch created, bank credit matched, no exceptions."
+    else:
+        message = (
+            "Validated, normalized, ingested, and reconciled — batch created, "
+            f"{len(result.exceptions_created)} exception(s) raised for human review."
+        )
+    return RazorpayIngestionOut(
+        duplicate=result.duplicate,
+        source_event_id=result.source_event_id,
+        batch_id=result.batch_id,
+        validated=result.validated,
+        normalized=result.normalized,
+        ingested=result.ingested,
+        reconciled=result.reconciled,
+        exceptions_created=result.exceptions_created,
+        message=message,
+    )
 
 
 @app.post("/query", response_model=QueryResponse)

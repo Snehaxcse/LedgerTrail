@@ -20,8 +20,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app import models
+from app.auth import AuthenticatedUser
 from app.database import Base
 from app.main import ApprovalRequest, approve_exception
+
+# approve_exception derives actor from current_user (an authenticated session),
+# never from body.approver (see app/auth.py) -- this fake stands in for a
+# logged-in approver across every test below.
+SNEHA = AuthenticatedUser(id=1, username="sneha", role="approver", display_name="Sneha", job_title="Finance Analyst")
 
 
 def _isolated_db():
@@ -67,8 +73,8 @@ def test_policy_confirmed_succeeds_for_a_genuinely_eligible_exception():
     db = _isolated_db()
     try:
         exc = _make_exception(db, severity="low", investigation_result=CLEAN_INVESTIGATION)
-        body = ApprovalRequest(approver="Sneha", decision="approved", resolution_method="policy_confirmed")
-        response = approve_exception(exc.id, body, db)
+        body = ApprovalRequest(decision="approved", resolution_method="policy_confirmed")
+        response = approve_exception(exc.id, body, db, current_user=SNEHA)
 
         assert response.status == "approved"
         assert response.resolution_method == "policy_confirmed"
@@ -92,9 +98,9 @@ def test_policy_confirmed_rejected_when_severity_high():
     db = _isolated_db()
     try:
         exc = _make_exception(db, severity="high", investigation_result=CLEAN_INVESTIGATION)
-        body = ApprovalRequest(approver="Sneha", decision="approved", resolution_method="policy_confirmed")
+        body = ApprovalRequest(decision="approved", resolution_method="policy_confirmed")
         try:
-            approve_exception(exc.id, body, db)
+            approve_exception(exc.id, body, db, current_user=SNEHA)
             assert False, "expected HTTPException"
         except HTTPException as e:
             assert e.status_code == 400
@@ -115,9 +121,9 @@ def test_policy_confirmed_rejected_when_variance_nonzero():
         exc = _make_exception(
             db, bank_amount=9800, total_net=9850, investigation_result=CLEAN_INVESTIGATION,
         )
-        body = ApprovalRequest(approver="Sneha", decision="approved", resolution_method="policy_confirmed")
+        body = ApprovalRequest(decision="approved", resolution_method="policy_confirmed")
         try:
-            approve_exception(exc.id, body, db)
+            approve_exception(exc.id, body, db, current_user=SNEHA)
             assert False, "expected HTTPException"
         except HTTPException as e:
             assert e.status_code == 400
@@ -130,9 +136,9 @@ def test_policy_confirmed_rejected_when_no_investigation_yet():
     db = _isolated_db()
     try:
         exc = _make_exception(db, investigation_result=None)
-        body = ApprovalRequest(approver="Sneha", decision="approved", resolution_method="policy_confirmed")
+        body = ApprovalRequest(decision="approved", resolution_method="policy_confirmed")
         try:
-            approve_exception(exc.id, body, db)
+            approve_exception(exc.id, body, db, current_user=SNEHA)
             assert False, "expected HTTPException"
         except HTTPException as e:
             assert e.status_code == 400
@@ -148,10 +154,10 @@ def test_policy_confirmed_rejected_when_paired_with_reject_decision():
     try:
         exc = _make_exception(db, severity="low", investigation_result=CLEAN_INVESTIGATION)
         body = ApprovalRequest(
-            approver="Sneha", decision="rejected", reason="test", resolution_method="policy_confirmed",
+            decision="rejected", reason="test", resolution_method="policy_confirmed",
         )
         try:
-            approve_exception(exc.id, body, db)
+            approve_exception(exc.id, body, db, current_user=SNEHA)
             assert False, "expected HTTPException"
         except HTTPException as e:
             assert e.status_code == 400
@@ -167,8 +173,8 @@ def test_manual_approval_unaffected_defaults_to_manual_resolution_method():
     db = _isolated_db()
     try:
         exc = _make_exception(db, severity="high", investigation_result=None)  # would be policy-ineligible
-        body = ApprovalRequest(approver="Sneha", decision="approved")
-        response = approve_exception(exc.id, body, db)
+        body = ApprovalRequest(decision="approved")
+        response = approve_exception(exc.id, body, db, current_user=SNEHA)
 
         assert response.status == "approved"
         assert response.resolution_method == "manual"

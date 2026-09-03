@@ -91,6 +91,13 @@ export function describeAuditEvent(event, index) {
     return `${subject} reviewed by ${who}`
   }
 
+  if (event.action === 'event_ingested') {
+    const batch = formatBatchLabel(after?.batch_id)
+    return after?.source_event_id
+      ? `Razorpay settlement ingested (${after.source_event_id})${batch ? ` — ${batch} created` : ''}`
+      : 'Razorpay settlement ingested'
+  }
+
   return titleAction(event.action)
 }
 
@@ -149,6 +156,17 @@ export function auditEventDetails(event, index, batchesById = {}, approversByNam
       role: approversByName[actor] || null,
       reason: after.reason || null,
       resolutionMethod: after.resolution_method || 'manual',
+    }
+  }
+
+  if (event.action === 'event_ingested') {
+    return {
+      kind: 'ingested',
+      badgeLabel: 'INGESTED',
+      badgeTone: 'forest',
+      subject: formatBatchLabel(after.batch_id) || 'Razorpay settlement',
+      sourceEventId: after.source_event_id || null,
+      bankAmount: batch?.matched_bank_amount ?? null,
     }
   }
 

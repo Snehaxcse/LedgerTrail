@@ -42,10 +42,20 @@ class BridgeResult:
     is_reconciled: bool
 
 
-def compute_bridge(db: Session) -> List[BridgeResult]:
+def compute_bridge(db: Session, batch_ids: Optional[List[int]] = None) -> List[BridgeResult]:
+    """batch_ids: when given, computes results for only those batches. Purely a
+    filter on a read-only computation -- compute_bridge never writes, so this
+    is safe by construction, unlike the batch_ids parameters added to
+    matching.run_matching / exceptions.classify_exceptions for the same live-
+    ingestion use case (app/razorpay_ingestion.py). Default (None) is
+    unchanged: every batch, exactly as before."""
     results = []
 
-    for batch in db.query(models.SettlementBatch).order_by(models.SettlementBatch.id).all():
+    query = db.query(models.SettlementBatch).order_by(models.SettlementBatch.id)
+    if batch_ids is not None:
+        query = query.filter(models.SettlementBatch.id.in_(batch_ids))
+
+    for batch in query.all():
         entries = db.query(models.SettlementEntry).filter(models.SettlementEntry.batch_id == batch.id).all()
 
         sum_gross = sum(e.gross_amount for e in entries)

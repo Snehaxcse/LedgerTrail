@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import Amount from './Amount'
 import AiExplanation from './AiExplanation'
 import EvidencePanel from './EvidencePanel'
 import InvestigationTrace from './InvestigationTrace'
-import { getApprovers } from '../api'
+import { useAuth } from '../lib/AuthContext'
 import { formatClassification } from '../lib/format'
 
 const STATUS_STYLES = {
@@ -32,34 +32,18 @@ const SEVERITY_FILTERS = [
 export default function ExceptionQueue({
   batchId,
   exceptions,
-  approver,
-  onApproverChange,
   reasons,
   onReasonChange,
   onReview,
   pendingId,
   error,
 }) {
+  const { user } = useAuth()
+  const isApprover = user?.role === 'approver'
   const reasonRefs = useRef({})
   const [missingReasonId, setMissingReasonId] = useState(null)
   const [severityFilter, setSeverityFilter] = useState('all')
-  const [approvers, setApprovers] = useState([])
 
-  useEffect(() => {
-    let cancelled = false
-    getApprovers()
-      .then((list) => {
-        if (!cancelled) setApprovers(list)
-      })
-      .catch(() => {
-        // Non-fatal: the dropdown just stays empty and approve/reject stays
-        // disabled (same as the old "no name typed yet" state) -- the server
-        // validates approver regardless, so nothing unsafe can slip through.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
   const blockingOpen = exceptions.filter(
     (row) => row.status === 'open' && row.requires_approval,
   )
@@ -86,7 +70,7 @@ export default function ExceptionQueue({
 
   function handleReject(row) {
     const text = (reasons[row.id] ?? '').trim()
-    if (!approver.trim() || pendingId != null) return
+    if (!isApprover || pendingId != null) return
     if (!text) {
       setMissingReasonId(row.id)
       reasonRefs.current[row.id]?.focus()
@@ -137,30 +121,12 @@ export default function ExceptionQueue({
               })}
             </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-muted">
-                Approver
-              </span>
-              <select
-                value={approver}
-                onChange={(event) => onApproverChange(event.target.value)}
-                className="w-56 rounded-sm border border-rule bg-paper px-3 py-1.5 text-ink outline-none focus:border-forest"
-              >
-                <option value="">Select an approver…</option>
-                {approvers.map((person) => (
-                  <option key={person.name} value={person.name}>
-                    {person.name} — {person.role}
-                  </option>
-                ))}
-              </select>
-            </label>
+          {!isApprover ? (
             <p className="max-w-[16rem] border border-dashed border-brass/70 bg-amber-wash px-2 py-1 text-[11px] leading-snug text-ink">
-              <span className="font-semibold text-brass">Simulated operator identity</span>
-              {' — '}
-              a fixed list of demo names, not real authentication.
+              <span className="font-semibold text-brass">Analyst</span> — you can investigate and
+              inspect evidence. Only an Approver can approve or reject.
             </p>
-          </div>
+          ) : null}
         </div>
       </header>
 
@@ -229,7 +195,7 @@ export default function ExceptionQueue({
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          disabled={!approver.trim() || pendingId != null}
+                          disabled={!isApprover || pendingId != null}
                           onClick={() => onReview(row.id, 'approved')}
                           className="rounded-sm bg-forest px-3 py-1.5 text-sm font-medium text-paper-raised disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-forest"
                         >
@@ -237,7 +203,7 @@ export default function ExceptionQueue({
                         </button>
                         <button
                           type="button"
-                          disabled={!approver.trim() || pendingId != null}
+                          disabled={!isApprover || pendingId != null}
                           onClick={() => handleReject(row)}
                           className="rounded-sm border border-rust px-3 py-1.5 text-sm font-medium text-rust disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rust"
                         >
@@ -246,7 +212,7 @@ export default function ExceptionQueue({
                         {row.policy_eligible ? (
                           <button
                             type="button"
-                            disabled={!approver.trim() || pendingId != null}
+                            disabled={!isApprover || pendingId != null}
                             onClick={() => onReview(row.id, 'approved', undefined, 'policy_confirmed')}
                             title={row.policy_reason}
                             className="rounded-sm border border-brass bg-amber-wash px-3 py-1.5 text-sm font-medium text-brass disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brass"
@@ -254,9 +220,9 @@ export default function ExceptionQueue({
                             {pendingId === row.id ? 'Saving…' : 'Confirm & resolve'}
                           </button>
                         ) : null}
-                        {!approver.trim() ? (
+                        {!isApprover ? (
                           <span className="self-center text-xs text-ink-muted">
-                            Select an approver to decide.
+                            Only an Approver can decide.
                           </span>
                         ) : reasonMissing ? (
                           <span className="self-center text-xs text-rust">

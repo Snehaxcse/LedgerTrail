@@ -88,11 +88,17 @@ def _candidates_for_batch(batch, bank_transactions, amount_tolerance, date_windo
     return candidates
 
 
-def _reset_existing_matches(db: Session):
+def _reset_existing_matches(db: Session, batch_ids: Optional[List[int]] = None):
     """Clears prior Match rows and batch links so this function is safely re-runnable.
-    Does not touch AuditEvent -- that table is append-only, never updated or deleted."""
-    db.query(models.Match).delete()
-    for batch in db.query(models.SettlementBatch).all():
+    Does not touch AuditEvent -- that table is append-only, never updated or deleted.
+    batch_ids: when given, only resets those batches -- see run_matching's docstring."""
+    match_query = db.query(models.Match)
+    batch_query = db.query(models.SettlementBatch)
+    if batch_ids is not None:
+        match_query = match_query.filter(models.Match.settlement_batch_id.in_(batch_ids))
+        batch_query = batch_query.filter(models.SettlementBatch.id.in_(batch_ids))
+    match_query.delete(synchronize_session=False)
+    for batch in batch_query.all():
         batch.bank_transaction_id = None
     db.commit()
 
@@ -125,11 +131,33 @@ def run_matching(
     db: Session,
     amount_tolerance: float = AMOUNT_TOLERANCE,
     date_window_days: int = DATE_WINDOW_DAYS,
+    batch_ids: Optional[List[int]] = None,
 ) -> List[MatchResult]:
-    _reset_existing_matches(db)
+    """batch_ids: when given, scopes both the reset and the matching pass to just
+    these batches -- every other batch's existing Match row and bank_transaction_id
+    link is left completely untouched, and its bank transaction is never re-offered
+    as a candidate here (see the filter below). Used by the live Razorpay ingestion
+    path (app/razorpay_ingestion.py) so ingesting one new event can never disturb the
+    primary dataset's existing matches or flood the audit trail with re-created
+    match_created rows for batches that didn't change. Default (None) is the original
+    full-regen behavior, unchanged -- still what app/startup.py,
+    scripts/run_reconciliation.py, and app/holdout_sandbox.py all call."""
+    _reset_existing_matches(db, batch_ids)
 
-    batches = db.query(models.SettlementBatch).all()
+    batch_query = db.query(models.SettlementBatch)
+    if batch_ids is not None:
+        batch_query = batch_query.filter(models.SettlementBatch.id.in_(batch_ids))
+    batches = batch_query.all()
+
     bank_transactions = db.query(models.BankTransaction).all()
+    if batch_ids is not None:
+        # Excludes bank transactions already claimed by a batch OUTSIDE this scope --
+        # those matches were deliberately left untouched above, so they must not be
+        # re-offered as candidates (and possibly flagged "ambiguous") here.
+        bank_transactions = [
+            txn for txn in bank_transactions
+            if txn.matched_batch is None or txn.matched_batch.id in batch_ids
+        ]
 
     per_batch_candidates = {
         batch.id: _candidates_for_batch(batch, bank_transactions, amount_tolerance, date_window_days)

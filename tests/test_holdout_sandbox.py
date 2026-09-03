@@ -127,14 +127,18 @@ def test_approval_race_second_approver_gets_409_with_current_state():
     assert exc["status"] == "open"
 
     db1 = hs.get_sandbox_session(sandbox_id)
-    response = _approve_exception_core(db1, exc["id"], ApprovalRequest(approver="Sneha", decision="approved"))
+    response = _approve_exception_core(
+        db1, exc["id"], ApprovalRequest(approver="Sneha", decision="approved"), actor="Sneha",
+    )
     db1.close()
     assert response.status == "approved"
 
     db2 = hs.get_sandbox_session(sandbox_id)
     try:
         with pytest.raises(HTTPException) as excinfo:
-            _approve_exception_core(db2, exc["id"], ApprovalRequest(approver="Rahul", decision="approved"))
+            _approve_exception_core(
+                db2, exc["id"], ApprovalRequest(approver="Rahul", decision="approved"), actor="Rahul",
+            )
         assert excinfo.value.status_code == 409
         assert "APPROVED BY SNEHA" in excinfo.value.detail
     finally:
@@ -151,7 +155,7 @@ def test_approval_race_uses_a_throwaway_exception_not_primary_dataset():
     sandbox_id = result["sandbox_id"]
     exc = result["exception"]
     db = hs.get_sandbox_session(sandbox_id)
-    _approve_exception_core(db, exc["id"], ApprovalRequest(approver="Sneha", decision="approved"))
+    _approve_exception_core(db, exc["id"], ApprovalRequest(approver="Sneha", decision="approved"), actor="Sneha")
     db.close()
     after = _hash_real_db()
     assert before == after

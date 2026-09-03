@@ -17,6 +17,46 @@ function formatBatch(id) {
   return `Batch ${String(id).padStart(2, '0')}`
 }
 
+const SAFETY_ROWS = [
+  ['Financial arithmetic', 'Deterministic'],
+  ['Settlement matching', 'Deterministic'],
+  ['AI authority', 'Read-only'],
+  ['AI claims', 'Independently verified'],
+  ['Exception resolution', 'Human approval'],
+  ['Approval transition', 'Atomic + audited'],
+  ['Held-out evaluation', 'Synthetic + isolated'],
+]
+
+const PIPELINE_STEPS = [
+  'Deterministic reconciliation', 'Exception', 'AI investigation', 'Deterministic verification', 'Human decision',
+]
+
+function SystemSafetySummary() {
+  return (
+    <section className="mt-6 border border-ink/20 bg-paper-raised px-5 py-5">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-muted">System safety</p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-muted">
+        {PIPELINE_STEPS.map((step, i) => (
+          <span key={step} className="flex items-center gap-1.5">
+            <span className="rounded-sm border border-rule bg-paper px-2 py-1 text-ink">{step}</span>
+            {i < PIPELINE_STEPS.length - 1 ? <span aria-hidden="true">→</span> : null}
+          </span>
+        ))}
+      </div>
+
+      <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+        {SAFETY_ROWS.map(([label, value]) => (
+          <div key={label} className="flex items-baseline justify-between gap-3 border-b border-rule/60 py-1.5">
+            <dt className="text-ink-muted">{label}</dt>
+            <dd className="font-semibold text-forest">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  )
+}
+
 export default function Transparency() {
   const [data, setData] = useState(null)
   const [stats, setStats] = useState(null)
@@ -54,6 +94,8 @@ export default function Transparency() {
       <p className="mt-2 max-w-2xl text-ink-muted">
         Planted errors from the synthetic dataset compared with exceptions the engine recorded.
       </p>
+
+      <SystemSafetySummary />
 
       {loading ? <p className="mt-8 text-ink-muted">Loading transparency report…</p> : null}
       {error ? (

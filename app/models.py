@@ -113,6 +113,68 @@ class AuditEvent(Base):
     after_state = Column(Text, nullable=True)  # JSON-encoded snapshot
 
 
+class DemoUser(Base):
+    """Minimal, deliberately small auth model -- username + password (hashed,
+    see app/auth.py) -> role. Two roles only: "analyst" (view/investigate,
+    cannot approve/reject) and "approver" (everything an analyst can do,
+    plus approve/reject). Seeded idempotently at boot (app/startup.py) --
+    NOT wiped on regen (unlike ApprovalLog/IngestedEvent): user accounts
+    aren't part of the reconciliation dataset's reseed lifecycle, and
+    re-creating them on every restart would needlessly invalidate any
+    still-open session. display_name is what's recorded as the actor in
+    ApprovalLog/AuditEvent -- server-derived from the session, never from
+    client-supplied request data (see app/main.py's approve_exception)."""
+    __tablename__ = "demo_users"
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String, nullable=False, unique=True)
+    password_hash = Column(String, nullable=False)
+    password_salt = Column(String, nullable=False)
+    role = Column(String, nullable=False)  # "analyst" | "approver"
+    display_name = Column(String, nullable=False)
+    job_title = Column(String, nullable=False)
+
+
+class UserSession(Base):
+    """Server-issued opaque session token (app/auth.py) -- deliberately NOT a
+    JWT/refresh-token scheme (see spec: "keep this extremely small"). No
+    expiry logic: this is a synthetic demo credential set, not a production
+    security boundary. token is a cryptographically random 32-byte urlsafe
+    string (secrets.token_urlsafe), unguessable in practice; looked up
+    directly per request rather than decoded/verified, so revocation is a
+    simple row delete (see /auth/logout)."""
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True)
+    token = Column(String, nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey("demo_users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False)
+
+
+class IngestedEvent(Base):
+    """Idempotency + provenance record for the REAL Razorpay-shaped ingestion
+    path (app/razorpay_ingestion.py) -- unlike HeldOutIngestionRecord below,
+    this DOES run against the primary ledgertrail.db and DOES create a real
+    SettlementBatch a judge sees in the normal batch list. Same proven
+    unique-constraint idempotency pattern: a second ingestion attempt with the
+    same source_event_id fails at the database level (IntegrityError caught
+    by the adapter), not via an application-code check a caller could race
+    past. raw_payload is the validated, as-received payload (JSON-encoded) --
+    kept for provenance/debugging, never re-parsed for reconciliation (the
+    batch/entries/bank transaction rows it produced are the source of truth
+    once created)."""
+    __tablename__ = "ingested_events"
+
+    id = Column(Integer, primary_key=True)
+    source_event_id = Column(String, nullable=False, unique=True)
+    raw_payload = Column(Text, nullable=False)
+    # Nullable: the event row is inserted (and its uniqueness constraint checked)
+    # BEFORE the batch it produces exists -- see app/razorpay_ingestion.py -- then
+    # backfilled in the same transaction once the batch is created.
+    batch_id = Column(Integer, ForeignKey("settlement_batches.id"), nullable=True)
+    ingested_at = Column(DateTime, nullable=False)
+
+
 class HeldOutIngestionRecord(Base):
     """Idempotency tracking for the held-out sandbox's replay demo
     (app/holdout_sandbox.py) -- NOT part of the primary reconciliation

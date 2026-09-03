@@ -76,6 +76,7 @@ def _make_open_exception(engine):
 def test_two_simultaneous_approvals_only_one_wins(tmp_path):
     from fastapi import HTTPException
 
+    from app.auth import AuthenticatedUser
     from app.main import ApprovalRequest, approve_exception
 
     db_path = tmp_path / "concurrency_test.db"
@@ -85,24 +86,31 @@ def test_two_simultaneous_approvals_only_one_wins(tmp_path):
 
     exc_id = _make_open_exception(engine)
 
+    # approve_exception now derives actor from current_user (an authenticated
+    # session), never from body.approver -- see app/auth.py. These two fake
+    # AuthenticatedUser objects stand in for two different logged-in approvers
+    # racing each other, the same scenario this test proved before real auth existed.
+    sneha = AuthenticatedUser(id=1, username="sneha", role="approver", display_name="Sneha", job_title="Finance Analyst")
+    rahul = AuthenticatedUser(id=2, username="rahul", role="approver", display_name="Rahul", job_title="Reconciliation Analyst")
+
     barrier = threading.Barrier(2)
     results = {}
     errors = {}
 
-    def attempt(name, approver, decision, reason=None):
+    def attempt(name, current_user, decision, reason=None):
         db = Session()
         try:
             barrier.wait(timeout=5)
-            body = ApprovalRequest(approver=approver, decision=decision, reason=reason)
-            results[name] = approve_exception(exc_id, body, db)
+            body = ApprovalRequest(decision=decision, reason=reason)
+            results[name] = approve_exception(exc_id, body, db, current_user=current_user)
         except HTTPException as e:
             errors[name] = e
         finally:
             db.close()
 
-    t1 = threading.Thread(target=attempt, args=("t1", "Sneha", "approved"))
+    t1 = threading.Thread(target=attempt, args=("t1", sneha, "approved"))
     t2 = threading.Thread(
-        target=attempt, args=("t2", "Rahul", "rejected"), kwargs={"reason": "concurrency test"}
+        target=attempt, args=("t2", rahul, "rejected"), kwargs={"reason": "concurrency test"}
     )
     t1.start()
     t2.start()

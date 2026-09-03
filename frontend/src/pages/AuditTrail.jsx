@@ -170,6 +170,19 @@ function AuditEventCard({ event, details }) {
             ) : null}
           </>
         ) : null}
+
+        {details.kind === 'ingested' ? (
+          <>
+            {details.sourceEventId ? (
+              <span className="font-mono">{details.sourceEventId}</span>
+            ) : null}
+            {details.bankAmount !== null ? (
+              <span className="flex items-center gap-1">
+                Bank <Amount value={details.bankAmount} className="text-ink-muted" />
+              </span>
+            ) : null}
+          </>
+        ) : null}
       </div>
     </li>
   )

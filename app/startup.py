@@ -47,7 +47,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app import anomaly_detection, bridge, demo_cache, exceptions, matching, models
+from app import anomaly_detection, auth, bridge, demo_cache, exceptions, matching, models
 from app.database import SessionLocal, ensure_schema
 
 logger = logging.getLogger("ledgertrail.startup")
@@ -292,6 +292,12 @@ def run_startup_sequence():
 
         logger.info("startup: applying demo approval")
         _apply_demo_approval(db)
+
+        # Deliberately NOT preceded by a wipe (unlike everything above) -- user
+        # accounts aren't part of the reconciliation dataset's reseed lifecycle.
+        # seed_demo_users is idempotent by username, so this is safe on every boot.
+        logger.info("startup: seeding demo users")
+        auth.seed_demo_users(db)
     finally:
         db.close()
 
