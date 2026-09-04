@@ -12,6 +12,7 @@ LedgerTrail processes **172 settlement entries across 10 batches**, deterministi
 
 ## 🚀 Live Demo
 
+- **Live App:** [https://ledger-trail-rho.vercel.app/](https://ledger-trail-rho.vercel.app/)
 - **Backend API:** [https://ledgertrail-1.onrender.com](https://ledgertrail-1.onrender.com)
 - **Buildathon track:** Track 4 — AI Finance Controller
 - **Dataset:** 172 settlement entries / 10 batches
