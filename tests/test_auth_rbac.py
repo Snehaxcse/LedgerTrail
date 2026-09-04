@@ -182,6 +182,26 @@ def test_approver_approval_allowed_and_actor_is_server_derived():
         db.close()
 
 
+def test_ingestion_replay_requires_authentication():
+    """POST /demo/razorpay-ingestion/replay mutates the real DB (unlike the
+    other, read-only/sandboxed demo endpoints), so unlike them it must be
+    gated -- 401 with no token at all, same failure mode as the core
+    workflow endpoints."""
+    assert client.post("/demo/razorpay-ingestion/replay").status_code == 401
+
+
+def test_ingestion_replay_allows_any_authenticated_role():
+    """Not a financial approval decision -- both an analyst and an approver
+    may trigger it, unlike /exceptions/{id}/approve which requires
+    require_approver specifically."""
+    analyst_token = _login("rahul").json()["token"]
+    response = client.post(
+        "/demo/razorpay-ingestion/replay",
+        headers={"Authorization": f"Bearer {analyst_token}"},
+    )
+    assert response.status_code == 200
+
+
 def test_zero_mutation_to_real_ledgertrail_db():
     before = _hash_real_db()
     # Re-run a handful of authenticated requests after all prior tests.

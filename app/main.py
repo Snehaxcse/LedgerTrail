@@ -1670,13 +1670,22 @@ class RazorpayIngestionOut(BaseModel):
 
 
 @app.post("/demo/razorpay-ingestion/replay", response_model=RazorpayIngestionOut)
-def replay_razorpay_settlement(db: Session = Depends(get_db)):
+def replay_razorpay_settlement(
+    db: Session = Depends(get_db),
+    current_user: auth.AuthenticatedUser = Depends(auth.get_current_user),
+):
     """Judge-facing "Replay Razorpay settlement" action -- a REAL call into
     app.razorpay_ingestion.ingest_razorpay_event against the real
     ledgertrail.db, always with the same fixed demo payload
     (source_event_id="event_razorpay_001"). Not a live Razorpay
     integration: this is a Razorpay-compatible ingestion adapter fed a fixed
     synthetic payload, not a webhook receiver.
+
+    get_current_user is required here (any role -- this isn't a financial
+    approval decision, just gating who can trigger a real mutation of the
+    shared live database) so an anonymous visitor can no longer create a
+    real batch. See app/auth.py's module docstring for the up-to-date scope
+    list this endpoint now belongs to.
 
     First click: a genuinely new batch is created and run through the
     existing (batch-scoped) reconciliation engine -- ingested=True. Second

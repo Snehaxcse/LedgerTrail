@@ -23,12 +23,18 @@ SCOPE (documented deliberately, not an oversight): get_current_user is
 required on the core exception-review workflow -- batches, batch detail,
 exceptions, evidence, explain, investigate, approve, audit-trail,
 transparency, stats (see app/main.py). It is NOT applied to the standalone
-demo/proof pages (hero-case agent demo, Razorpay ingestion replay, held-out
-evaluation, holdout-sandbox demos, bank statement/narration-verify, trend,
-data-sources, NL query) -- those are supplementary or self-contained demos,
-not part of the workflow whose financial decisions this auth model exists to
-gate, and gating them would be a much larger, riskier change for no spec-
-mandated benefit.
+demo/proof pages (hero-case agent demo, held-out evaluation, holdout-sandbox
+demos, bank statement/narration-verify, trend, data-sources, NL query) --
+those are read-only or run against their own isolated sandbox DB, not the
+shared ledgertrail.db, so gating them would be a much larger, riskier change
+for no spec-mandated benefit.
+
+The one exception is POST /demo/razorpay-ingestion/replay: unlike the other
+demo endpoints, it performs a REAL write against the shared ledgertrail.db
+(see app/main.py's replay_razorpay_settlement), so it DOES require
+get_current_user -- any authenticated role, since this is gating who can
+trigger a database mutation at all, not a financial approval decision that
+would need require_approver.
 """
 import datetime
 import hashlib
