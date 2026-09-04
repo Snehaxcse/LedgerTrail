@@ -5,6 +5,7 @@ import MiniBridge from '../components/MiniBridge'
 import StatusBanner from '../components/StatusBanner'
 import Amount from '../components/Amount'
 import { formatDate } from '../lib/format'
+import { onBatchesInvalidated } from '../lib/dataEvents'
 
 export default function Batches() {
   const [batches, setBatches] = useState([])
@@ -14,23 +15,28 @@ export default function Batches() {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([
-      getBatches(),
-      getDataSources().catch(() => null),
-    ])
-      .then(([batchData, sourcesData]) => {
-        if (cancelled) return
-        setBatches(batchData)
-        setDataSources(sourcesData)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    function load() {
+      Promise.all([
+        getBatches(),
+        getDataSources().catch(() => null),
+      ])
+        .then(([batchData, sourcesData]) => {
+          if (cancelled) return
+          setBatches(batchData)
+          setDataSources(sourcesData)
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err.message)
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }
+    load()
+    const unsubscribe = onBatchesInvalidated(load)
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [])
 

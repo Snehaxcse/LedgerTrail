@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { replayRazorpaySettlement } from '../api'
+import { invalidateBatches } from '../lib/dataEvents'
 
 const STEPS = [
   { key: 'validated', label: 'Validated' },
@@ -20,6 +21,10 @@ export default function IngestionDemo() {
     try {
       const data = await replayRazorpaySettlement()
       setResult(data)
+      // A genuinely new batch was created (not the duplicate-event path) --
+      // tell any already-mounted batch-list/stats views to refetch, rather
+      // than relying solely on their own next mount.
+      if (!data.duplicate) invalidateBatches()
     } catch (err) {
       setError(err.message)
     } finally {

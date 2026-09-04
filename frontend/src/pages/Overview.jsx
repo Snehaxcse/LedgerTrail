@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { getStats } from '../api'
 import Amount from '../components/Amount'
 import { formatClassification } from '../lib/format'
+import { onBatchesInvalidated } from '../lib/dataEvents'
 
 const SEVERITY_STYLES = {
   high: 'bg-rust-wash text-rust',
@@ -18,18 +19,23 @@ export default function Overview() {
 
   useEffect(() => {
     let cancelled = false
-    getStats()
-      .then((statsData) => {
-        if (!cancelled) setStats(statsData)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    function load() {
+      getStats()
+        .then((statsData) => {
+          if (!cancelled) setStats(statsData)
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err.message)
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }
+    load()
+    const unsubscribe = onBatchesInvalidated(load)
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [])
 

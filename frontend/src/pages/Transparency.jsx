@@ -6,6 +6,7 @@ import IdempotencyDemo from '../components/IdempotencyDemo'
 import MetricsStrip from '../components/MetricsStrip'
 import ReconciliationProgressDemo from '../components/ReconciliationProgressDemo'
 import { formatClassification, formatInr } from '../lib/format'
+import { onBatchesInvalidated } from '../lib/dataEvents'
 
 function formatValue(value) {
   if (value === null || value === undefined) return '—'
@@ -65,20 +66,25 @@ export default function Transparency() {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([getTransparency(), getStats().catch(() => null)])
-      .then(([payload, statsData]) => {
-        if (cancelled) return
-        setData(payload)
-        setStats(statsData)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    function load() {
+      Promise.all([getTransparency(), getStats().catch(() => null)])
+        .then(([payload, statsData]) => {
+          if (cancelled) return
+          setData(payload)
+          setStats(statsData)
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err.message)
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }
+    load()
+    const unsubscribe = onBatchesInvalidated(load)
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [])
 
